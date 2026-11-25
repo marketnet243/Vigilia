@@ -1,28 +1,45 @@
-# Déploiement sur Vercel
+# Déploiement sur Vercel — Vigilia Command Center
 
-## Configuration du projet
+Ce guide explique comment déployer Vigilia Command Center sur [Vercel](https://vercel.com).
 
-1. Importer le dépôt `vigilianet/vigilia-command-center` dans Vercel.
-2. Laisser le répertoire racine à `.`.
-3. Utiliser Bun comme gestionnaire de paquets (le dépôt contient `bun.lock`).
-4. Utiliser `bun run build` comme commande de build. Laisser Vercel détecter la sortie du framework.
-5. Déployer d'abord en Preview et vérifier l'application avant de promouvoir en Production.
+---
 
-La configuration Vercel est dans `vercel.json`; Nitro est configuré avec le preset Vercel dans `nitro.config.ts`.
+## 1. Déploiement automatique depuis GitHub
 
-## Variables d'environnement Supabase
+1. Poussez votre code sur votre dépôt GitHub : `https://github.com/marketnet243/Vigilia.git`.
+2. Connectez-vous sur votre compte [Vercel Dashboard](https://vercel.com/new).
+3. Cliquez sur **Import** en sélectionnant le dépôt `marketnet243/Vigilia`.
+4. Vercel détecte automatiquement la configuration grâce à [vercel.json](file:///l:/PRODUCTION/PROJECT_NET/PROJET/VIGILIA/vercel.json) :
+   - **Framework Preset** : `Other` ou `TanStack Start`
+   - **Build Command** : `NITRO_PRESET=vercel vite build`
+   - **Output Directory** : `.vercel/output`
 
-Ajouter ces variables dans **Project Settings → Environment Variables** dans Vercel, au minimum pour Preview et Production :
+---
 
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_PUBLISHABLE_KEY`
-- `SUPABASE_URL`
-- `SUPABASE_PUBLISHABLE_KEY`
+## 2. Variables d'environnement obligatoires sur Vercel
 
-Les deux URL doivent correspondre au projet Supabase et les deux clés sont la clé publishable. Ne pas ajouter de clé `service_role`, de mot de passe de base de données ni d'autre secret dans une variable `VITE_*` ou dans le dépôt. Après avoir ajouté ou modifié des variables, relancer un déploiement pour que le build les prenne en compte.
+Dans **Project Settings → Environment Variables** sur Vercel, ajoutez ces variables pour tous les environnements (Production, Preview, Development) :
 
-## Contrôles avant la mise en ligne
+| Variable | Description | Exemple |
+|---|---|---|
+| `VITE_SUPABASE_URL` | URL de l'API Supabase | `https://gqttqjehlfeodocofytp.supabase.co` |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Clé publishable / anon Supabase | `sb_publishable_...` |
+| `SUPABASE_URL` | Identique à VITE_SUPABASE_URL (pour le SSR) | `https://gqttqjehlfeodocofytp.supabase.co` |
+| `SUPABASE_PUBLISHABLE_KEY` | Identique à VITE_SUPABASE_PUBLISHABLE_KEY | `sb_publishable_...` |
 
-- Vérifier que le projet Supabase et son schéma sont prêts et que les règles RLS protègent les données.
-- Vérifier la connexion, les pages protégées et les fonctions serveur en Preview.
-- Ne pas considérer le déploiement comme une migration ou une sauvegarde de la base de données.
+---
+
+## 3. Déploiement direct via CLI
+
+Si vous avez installé la CLI Vercel (`npm i -g vercel`), vous pouvez utiliser les scripts prêts à l'emploi :
+
+- **Linux / macOS** :
+  ```bash
+  chmod +x scripts/deploy-vercel.sh
+  ./scripts/deploy-vercel.sh
+  ```
+
+- **Windows (PowerShell)** :
+  ```powershell
+  .\scripts\deploy-vercel.ps1
+  ```
