@@ -101,6 +101,7 @@ export const INTEGRATION_STATUS_LABEL: Record<string, string> = {
   not_configured: "À configurer",
   disconnected: "Non connecté",
   connected: "Connecté",
+  pending: "En attente",
   error: "Erreur",
 };
 
@@ -108,9 +109,11 @@ export function IntegrationStatusBadge({ status }: { status: string }) {
   const cls =
     status === "connected"
       ? "border-success/35 bg-success/10 text-success"
-      : status === "error"
-        ? "border-destructive/35 bg-destructive/10 text-destructive"
-        : "border-border/80 bg-muted/40 text-muted-foreground";
+      : status === "pending"
+        ? "border-warning/35 bg-warning/10 text-warning"
+        : status === "error"
+          ? "border-destructive/35 bg-destructive/10 text-destructive"
+          : "border-border/80 bg-muted/40 text-muted-foreground";
   return (
     <span className={cn("inline-flex shrink-0 items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium", cls)}>
       {INTEGRATION_STATUS_LABEL[status] ?? status}

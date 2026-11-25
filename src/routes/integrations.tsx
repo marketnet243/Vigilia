@@ -262,7 +262,7 @@ function IntegrationsView({ w, refresh }: { w: Workspace; refresh: () => void })
                 Telegram
               </CardTitle>
               <IntegrationStatusBadge
-                status={tg?.verified ? "connected" : tg?.bot_username ? "error" : "not_configured"}
+                status={tg?.verified ? "connected" : tg?.bot_username ? (tg.webhook_active ? "pending" : "error") : "not_configured"}
               />
             </div>
             <CardDescription className="pt-1 text-xs leading-relaxed">
@@ -275,10 +275,27 @@ function IntegrationsView({ w, refresh }: { w: Workspace; refresh: () => void })
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="space-y-0.5">
                     <div className="flex items-center gap-1.5 font-mono font-medium">
-                      @{tg.bot_username ?? "bot"} {tg.verified && <CheckCircle2 className="size-3.5 text-success" />}
+                      <a
+                        href={`https://t.me/${tg.bot_username}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-primary hover:underline"
+                      >
+                        @{tg.bot_username ?? "bot"}
+                      </a>
+                      {tg.verified ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] text-success">
+                          <CheckCircle2 className="size-3.5" />
+                          Vérifié
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] text-warning">
+                          En attente du code
+                        </span>
+                      )}
                     </div>
                     <div className="text-muted-foreground">
-                      Webhook : {tg.webhook_active ? "actif" : "inactif"} · Chat :{" "}
+                      Webhook : {tg.webhook_active ? "actif (HTTPS)" : "inactif"} · Chat :{" "}
                       {tg.verified ? `#${tg.chat_id}` : "en attente de vérification"}
                     </div>
                   </div>
@@ -311,13 +328,14 @@ function IntegrationsView({ w, refresh }: { w: Workspace; refresh: () => void })
                         setBusy("tg-test");
                         try {
                           await doTgTest();
-                          toast.success("Notification Telegram envoyée.");
+                          toast.success("Notification de test envoyée sur Telegram !");
                         } catch (err) {
                           toast.error(err instanceof Error ? err.message : "Échec d'envoi");
                         } finally {
                           setBusy(null);
                         }
                       }}
+                      className={tg.verified ? "border-primary/40 text-primary font-semibold" : ""}
                     >
                       <Send className="mr-1.5 size-3.5" />
                       Tester
