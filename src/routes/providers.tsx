@@ -1,9 +1,10 @@
-import { useState, useId } from "react";
+import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import {
   Play,
   Plus,
+  Pencil,
   Trash2,
   Zap,
   TrendingUp,
@@ -23,8 +24,10 @@ import { pageHead } from "@/lib/workspace/head";
 import {
   addProvider,
   deleteProvider,
+  fetchProviderModels,
   testProvider,
   toggleProvider,
+  updateProvider,
   type Workspace,
 } from "@/lib/workspace/workspace.functions";
 import { Button } from "@/components/ui/button";
@@ -41,6 +44,7 @@ export const Route = createFileRoute("/providers")({
 });
 
 type ProviderType = "openai" | "gemini" | "anthropic" | "openrouter";
+type ModelOption = { id: string; label: string; desc: string };
 
 const PROVIDER_CONFIG: Record<
   ProviderType,
@@ -48,7 +52,7 @@ const PROVIDER_CONFIG: Record<
     name: string;
     defaultLabel: string;
     color: string;
-    models: { id: string; label: string; desc: string }[];
+    models: ModelOption[];
     defaultModel: string;
     defaultFallback: string;
   }
@@ -58,13 +62,13 @@ const PROVIDER_CONFIG: Record<
     defaultLabel: "Google Gemini Principal",
     color: "bg-blue-500/15 ring-blue-500/30 text-blue-400",
     models: [
-      { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", desc: "Recommandé · Ultra-rapide & performant" },
-      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", desc: "Raisonnement avancé & code complexe" },
-      { id: "gemini-1.5-flash", label: "Gemini 1.5 Flash", desc: "Léger & très économique" },
-      { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro", desc: "Grande fenêtre de contexte" },
+      { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", desc: "Recommandé · Ultra-rapide & dernière génération" },
+      { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview", desc: "Raisonnement avancé & code complexe" },
+      { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite", desc: "Léger & très économique" },
+      { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash", desc: "Compatibilité standard" },
     ],
-    defaultModel: "gemini-2.5-flash",
-    defaultFallback: "gemini-2.5-pro",
+    defaultModel: "gemini-3.8-flash",
+    defaultFallback: "gemini-3.1-pro-preview",
   },
   openai: {
     name: "OpenAI",
@@ -84,11 +88,11 @@ const PROVIDER_CONFIG: Record<
     defaultLabel: "Anthropic Claude",
     color: "bg-orange-500/15 ring-orange-500/30 text-orange-400",
     models: [
-      { id: "claude-3-5-sonnet-20241022", label: "Claude 3.5 Sonnet", desc: "Recommandé · Meilleur modèle code" },
+      { id: "claude-sonnet-4-20250514", label: "Claude Sonnet 4", desc: "Recommandé · Meilleur modèle code & analyse" },
+      { id: "claude-3-7-sonnet-20250219", label: "Claude 3.7 Sonnet", desc: "Raisonnement approfondi" },
       { id: "claude-3-5-haiku-20241022", label: "Claude 3.5 Haiku", desc: "Vitesse maximale & faible coût" },
-      { id: "claude-3-opus-20240229", label: "Claude 3 Opus", desc: "Analyse dense & tâches complexes" },
     ],
-    defaultModel: "claude-3-5-sonnet-20241022",
+    defaultModel: "claude-sonnet-4-20250514",
     defaultFallback: "claude-3-5-haiku-20241022",
   },
   openrouter: {
@@ -96,119 +100,196 @@ const PROVIDER_CONFIG: Record<
     defaultLabel: "OpenRouter Multi-LLM",
     color: "bg-purple-500/15 ring-purple-500/30 text-purple-400",
     models: [
-      { id: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet (OpenRouter)", desc: "Via passerelle OpenRouter" },
+      { id: "anthropic/claude-sonnet-4", label: "Claude Sonnet 4 (OpenRouter)", desc: "Via passerelle OpenRouter" },
       { id: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash (OpenRouter)", desc: "Faible latence" },
       { id: "openai/gpt-4o", label: "GPT-4o (OpenRouter)", desc: "Accès universel" },
       { id: "meta-llama/llama-3.3-70b-instruct", label: "Llama 3.3 70B", desc: "Open-source haute précision" },
     ],
-    defaultModel: "anthropic/claude-3.5-sonnet",
+    defaultModel: "anthropic/claude-sonnet-4",
     defaultFallback: "google/gemini-2.5-flash",
   },
 };
 
 function detectProviderFromKey(key: string): ProviderType | null {
   const k = key.trim();
-  // Google Gemini / AI Studio : formats AIza... (legacy) et AQ.Ab... (nouveau OAuth2/AI Studio)
-  if (k.startsWith("AIza")) return "gemini";
-  if (k.startsWith("AQ.")) return "gemini";
-  // Anthropic
+  if (k.startsWith("AIza") || k.startsWith("AQ.")) return "gemini";
   if (k.startsWith("sk-ant-")) return "anthropic";
-  // OpenRouter
   if (k.startsWith("sk-or-")) return "openrouter";
-  // OpenAI
   if (k.startsWith("sk-")) return "openai";
   return null;
 }
 
 function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
   const doAdd = useServerFn(addProvider);
+  const doUpdate = useServerFn(updateProvider);
   const doTest = useServerFn(testProvider);
   const doToggle = useServerFn(toggleProvider);
   const doDel = useServerFn(deleteProvider);
+  const doFetchModels = useServerFn(fetchProviderModels);
 
   const [open, setOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [optimisticEnabled, setOptimisticEnabled] = useState<Record<string, boolean>>({});
+
   const [provider, setProvider] = useState<ProviderType>("gemini");
   const [label, setLabel] = useState("");
-  const [model, setModel] = useState("gemini-2.5-flash");
-  const [fallback, setFallback] = useState("gemini-2.5-pro");
+  const [model, setModel] = useState("gemini-3.8-flash");
+  const [fallback, setFallback] = useState("gemini-3.1-pro-preview");
   const [secret, setSecret] = useState("");
   const [detectedBadge, setDetectedBadge] = useState<string | null>(null);
-  const [keyReady, setKeyReady] = useState(false); // true once key ≥ 8 chars
+  const [keyReady, setKeyReady] = useState(false);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [liveModels, setLiveModels] = useState<ModelOption[] | null>(null);
   const [priority, setPriority] = useState(10);
   const [limit, setLimit] = useState(2000000);
   const [busy, setBusy] = useState(false);
 
-  // Mise à jour du fournisseur avec adaptation des modèles
+  const activeProviderConfig = PROVIDER_CONFIG[provider];
+  const availableModels: ModelOption[] = liveModels && liveModels.length > 0 ? liveModels : activeProviderConfig.models;
+
+  async function loadModelsForKey(targetProvider: ProviderType, keyValue?: string, providerId?: string) {
+    setLoadingModels(true);
+    try {
+      const res = await doFetchModels({
+        data: {
+          provider: targetProvider,
+          ...(keyValue ? { secret: keyValue } : {}),
+          ...(providerId ? { providerId } : {}),
+        },
+      });
+      if (res.live && res.models.length > 0) {
+        setLiveModels(res.models);
+        // Garder le modèle sélectionné s'il est dans la liste, sinon choisir le premier recommandé
+        setModel((prev) => (res.models.some((m) => m.id === prev) ? prev : res.models[0]!.id));
+        setFallback((prev) =>
+          res.models.some((m) => m.id === prev)
+            ? prev
+            : (res.models[1]?.id ?? res.models[0]!.id),
+        );
+        setDetectedBadge(`${res.models.length} modèle(s) vérifiés chargés depuis ${PROVIDER_CONFIG[targetProvider].name}.`);
+      } else {
+        setLiveModels(null);
+      }
+    } catch {
+      setLiveModels(null);
+    } finally {
+      setLoadingModels(false);
+    }
+  }
+
   function handleProviderChange(p: ProviderType) {
     setProvider(p);
+    setLiveModels(null);
     const cfg = PROVIDER_CONFIG[p];
-    if (!label || Object.values(PROVIDER_CONFIG).some((c) => c.defaultLabel === label)) {
+    if (!editingId && (!label || Object.values(PROVIDER_CONFIG).some((c) => c.defaultLabel === label))) {
       setLabel(cfg.defaultLabel);
     }
     setModel(cfg.defaultModel);
     setFallback(cfg.defaultFallback);
-  }
-
-  // Détection automatique lors de la saisie / collage de la clé API
-  function handleSecretChange(val: string) {
-    setSecret(val);
-    const ready = val.trim().length >= 8;
-    setKeyReady(ready);
-    const detected = detectProviderFromKey(val);
-    if (detected) {
-      const cfg = PROVIDER_CONFIG[detected];
-      setProvider(detected);
-      setLabel(cfg.defaultLabel);
-      setModel(cfg.defaultModel);
-      setFallback(cfg.defaultFallback);
-      setDetectedBadge(`Clé ${cfg.name} reconnue automatiquement ! Modèles pré-configurés.`);
-      toast.success(`Clé ${cfg.name} détectée : modèles configurés.`);
-    } else if (ready) {
-      setDetectedBadge(null);
-    } else {
-      setDetectedBadge(null);
+    if (secret.trim().length >= 12) {
+      void loadModelsForKey(p, secret.trim());
     }
   }
 
-  function handleOpenDialog() {
+  function handleSecretChange(val: string) {
+    setSecret(val);
+    const trimmed = val.trim();
+    const ready = trimmed.length >= 12 || Boolean(editingId);
+    setKeyReady(ready);
+    const detected = detectProviderFromKey(trimmed);
+    if (detected) {
+      const cfg = PROVIDER_CONFIG[detected];
+      setProvider(detected);
+      if (!editingId) setLabel(cfg.defaultLabel);
+      setModel(cfg.defaultModel);
+      setFallback(cfg.defaultFallback);
+      setDetectedBadge(`Clé ${cfg.name} reconnue — chargement des modèles disponibles…`);
+      void loadModelsForKey(detected, trimmed);
+    } else if (trimmed.length >= 12) {
+      setDetectedBadge(null);
+      void loadModelsForKey(provider, trimmed);
+    } else {
+      setDetectedBadge(null);
+      setLiveModels(null);
+    }
+  }
+
+  function handleOpenCreate() {
+    setEditingId(null);
     setProvider("gemini");
     setLabel(PROVIDER_CONFIG.gemini.defaultLabel);
     setModel(PROVIDER_CONFIG.gemini.defaultModel);
     setFallback(PROVIDER_CONFIG.gemini.defaultFallback);
     setSecret("");
     setDetectedBadge(null);
+    setLiveModels(null);
     setKeyReady(false);
     setPriority(10);
     setLimit(2000000);
     setOpen(true);
   }
 
-  async function handleAdd(e: React.FormEvent) {
+  function handleOpenEdit(p: Workspace["providers"][number]) {
+    const prov = (["openai", "gemini", "anthropic", "openrouter"].includes(p.provider)
+      ? p.provider
+      : "gemini") as ProviderType;
+    setEditingId(p.id);
+    setProvider(prov);
+    setLabel(p.label);
+    setModel(p.model_default);
+    setFallback(p.fallback_model ?? PROVIDER_CONFIG[prov].defaultFallback);
+    setSecret("");
+    setDetectedBadge("Modification du fournisseur (laissez la clé vide pour conserver l'actuelle).");
+    setLiveModels(null);
+    setKeyReady(true);
+    setPriority(p.priority);
+    setLimit(p.monthly_token_limit);
+    setOpen(true);
+    void loadModelsForKey(prov, undefined, p.id);
+  }
+
+  async function handleSave(e: React.FormEvent) {
     e.preventDefault();
-    if (!secret.trim()) {
+    if (!editingId && !secret.trim()) {
       toast.error("Veuillez saisir votre clé API.");
       return;
     }
     setBusy(true);
     try {
-      await doAdd({
-        data: {
-          provider,
-          label: label.trim() || PROVIDER_CONFIG[provider].defaultLabel,
-          model_default: model,
-          fallback_model: fallback.trim() || null,
-          secret: secret.trim(),
-          shared_quota_group: null,
-          priority: Number(priority),
-          monthly_token_limit: Number(limit),
-        },
-      });
-      toast.success("Fournisseur ajouté avec succès (chiffré AES-256-GCM).");
+      if (editingId) {
+        await doUpdate({
+          data: {
+            id: editingId,
+            label: label.trim() || activeProviderConfig.defaultLabel,
+            model_default: model,
+            fallback_model: fallback.trim() || null,
+            priority: Number(priority),
+            monthly_token_limit: Number(limit),
+            ...(secret.trim().length >= 12 ? { secret: secret.trim() } : {}),
+          },
+        });
+        toast.success("Fournisseur et modèle mis à jour.");
+      } else {
+        await doAdd({
+          data: {
+            provider,
+            label: label.trim() || activeProviderConfig.defaultLabel,
+            model_default: model,
+            fallback_model: fallback.trim() || null,
+            secret: secret.trim(),
+            shared_quota_group: null,
+            priority: Number(priority),
+            monthly_token_limit: Number(limit),
+          },
+        });
+        toast.success("Fournisseur ajouté avec succès (chiffré AES-256-GCM).");
+      }
       setOpen(false);
       refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Erreur d'ajout");
+      toast.error(err instanceof Error ? err.message : "Erreur d'enregistrement");
     } finally {
       setBusy(false);
     }
@@ -218,16 +299,39 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
     setTestingId(id);
     try {
       await doTest({ data: { id } });
-      toast.success("Fournisseur testé avec succès et activé.");
+      toast.success("Fournisseur testé avec succès et activé !");
       refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Test échoué");
+      refresh();
     } finally {
       setTestingId(null);
     }
   }
 
-  const activeProviderConfig = PROVIDER_CONFIG[provider];
+  async function handleToggle(p: Workspace["providers"][number], nextEnabled: boolean) {
+    setTogglingId(p.id);
+    setOptimisticEnabled((prev) => ({ ...prev, [p.id]: nextEnabled }));
+    try {
+      await doToggle({ data: { id: p.id, enabled: nextEnabled } });
+      toast.success(nextEnabled ? `${p.label} activé.` : `${p.label} désactivé.`);
+      refresh();
+    } catch (err) {
+      setOptimisticEnabled((prev) => ({ ...prev, [p.id]: p.enabled }));
+      toast.error(err instanceof Error ? err.message : "Impossible de modifier le statut");
+    } finally {
+      setTogglingId(null);
+    }
+  }
+
+  // Assurer que les modèles actuellement sélectionnés apparaissent toujours dans la liste même s'ils ne sont plus dans le catalogue
+  const ensureModelInList = (id: string, list: ModelOption[]) =>
+    id && !list.some((m) => m.id === id)
+      ? [{ id, label: id, desc: "Modèle configuré actuellement" }, ...list]
+      : list;
+
+  const modelChoices = ensureModelInList(model, availableModels);
+  const fallbackChoices = ensureModelInList(fallback, availableModels);
 
   return (
     <div className="space-y-6">
@@ -237,7 +341,7 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
       >
         <Button
           size="sm"
-          onClick={handleOpenDialog}
+          onClick={handleOpenCreate}
           className="gap-2 bg-gradient-primary text-primary-foreground shadow-glow"
         >
           <Plus className="size-3.5" />
@@ -245,7 +349,6 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
         </Button>
       </PageHeader>
 
-      {/* Liste des fournisseurs configurés */}
       {w.providers.length === 0 ? (
         <div className="glass-card flex flex-col items-center justify-center gap-3 rounded-2xl py-14 text-center">
           <div className="flex size-14 items-center justify-center rounded-full bg-primary/10 ring-1 ring-primary/20">
@@ -254,11 +357,11 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
           <p className="text-sm font-medium text-foreground">Aucun fournisseur IA configuré</p>
           <p className="max-w-md text-xs text-muted-foreground">
             Collez votre clé API (Gemini, OpenAI, Anthropic ou OpenRouter). Vigilia détecte automatiquement le
-            fournisseur et sélectionne les meilleurs modèles.
+            fournisseur et charge les modèles compatibles avec votre clé.
           </p>
           <Button
             size="sm"
-            onClick={handleOpenDialog}
+            onClick={handleOpenCreate}
             className="mt-1 gap-2 bg-gradient-primary text-primary-foreground"
           >
             <Plus className="size-3.5" />
@@ -268,12 +371,13 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
       ) : (
         <div className="space-y-3">
           {w.providers.map((p) => {
+            const isEnabled = optimisticEnabled[p.id] ?? p.enabled;
             const pct = Math.min(100, Math.round((p.tokens_used / Math.max(1, p.monthly_token_limit)) * 100));
             const cfg = PROVIDER_CONFIG[p.provider as ProviderType] ?? {
               name: p.provider,
               color: "bg-muted/30 ring-border text-muted-foreground",
             };
-            const statusColor = !p.enabled
+            const statusColor = !isEnabled
               ? "bg-muted-foreground/30"
               : pct >= 90
               ? "bg-destructive"
@@ -295,7 +399,7 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
                     </div>
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <StatusDot status={p.enabled ? p.status : "disabled"} />
+                        <StatusDot status={isEnabled ? p.status : "disabled"} />
                         <span className="font-semibold text-sm">{p.label}</span>
                         <span className="rounded-full border border-border/50 bg-background/40 px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
                           Priorité {p.priority} · {cfg.name}
@@ -341,14 +445,24 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
                         </>
                       )}
                     </Button>
-                    <Switch
-                      checked={p.enabled}
-                      onCheckedChange={async (v) => {
-                        await doToggle({ data: { id: p.id, enabled: v } });
-                        refresh();
-                      }}
-                      aria-label={`Activer ${p.label}`}
-                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleOpenEdit(p)}
+                      className="gap-1.5 text-xs rounded-xl"
+                      title="Modifier le modèle ou les paramètres"
+                    >
+                      <Pencil className="size-3" />
+                      Modifier
+                    </Button>
+                    <div className="flex items-center px-1">
+                      <Switch
+                        checked={isEnabled}
+                        disabled={togglingId === p.id}
+                        onCheckedChange={(v) => handleToggle(p, v)}
+                        aria-label={`Activer ${p.label}`}
+                      />
+                    </div>
                     <Button
                       size="sm"
                       variant="ghost"
@@ -365,9 +479,9 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
                   </div>
                 </div>
 
-                {/* Barre de quota mensuel */}
-                <div className="space-y-1.5">
-                  <div className="flex justify-between font-mono text-[11px] text-muted-foreground">
+                {/* Jauge de quota */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between font-mono text-[11px] text-muted-foreground">
                     <span className="flex items-center gap-1">
                       <TrendingUp className="size-3" />
                       Quota : {p.tokens_used.toLocaleString("fr-FR")} /{" "}
@@ -388,7 +502,14 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
                 {p.last_error_message && (
                   <div className="mt-2.5 flex items-start gap-1.5 rounded-lg border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
                     <AlertTriangle className="mt-0.5 size-3 shrink-0" />
-                    {p.last_error_message}
+                    <span className="flex-1">{p.last_error_message}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenEdit(p)}
+                      className="shrink-0 font-mono text-[11px] underline hover:text-foreground"
+                    >
+                      Changer de modèle
+                    </button>
                   </div>
                 )}
               </div>
@@ -426,47 +547,57 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
         )}
       </div>
 
-      {/* ── MODALE PROPRE ET INTELLIGENTE : AJOUT FOURNISSEUR IA ── */}
+      {/* ── MODALE AJOUT / MODIFICATION FOURNISSEUR IA ── */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[92vh] max-w-lg overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Sparkles className="size-5 text-primary" />
-              Configurer une clé IA
+              {editingId ? "Modifier le fournisseur & les modèles" : "Configurer une clé IA"}
             </DialogTitle>
           </DialogHeader>
 
-          <form onSubmit={handleAdd} className="space-y-4 pt-1">
+          <form onSubmit={handleSave} className="space-y-4 pt-1">
             {/* ── ÉTAPE 1 : Clé API ── */}
             <div className="space-y-1.5">
               <Label className="text-xs font-medium text-foreground">
-                1. Clé API{" "}
-                <span className="text-primary font-normal">
-                  — collez votre clé pour charger les modèles
-                </span>
+                {editingId ? "Clé API (optionnel — laisser vide pour conserver)" : "1. Clé API"}{" "}
+                {!editingId && (
+                  <span className="text-primary font-normal">
+                    — collez votre clé pour charger les modèles
+                  </span>
+                )}
               </Label>
               <div className="relative">
                 <KeyRound className="pointer-events-none absolute left-3 top-3 size-4 text-muted-foreground" />
                 <Input
                   type="password"
-                  required
+                  required={!editingId}
                   value={secret}
                   onChange={(e) => handleSecretChange(e.target.value)}
                   className="rounded-xl border-border/80 bg-background/65 pl-10 font-mono text-xs placeholder:text-muted-foreground/50"
-                  placeholder="AIzaSy... (Gemini)  ·  sk-... (OpenAI / Claude)  ·  sk-or-... (OpenRouter)"
+                  placeholder={
+                    editingId
+                      ? "•••••••••••••••• (nouvelle clé pour remplacer)"
+                      : "AIzaSy... / AQ.Ab... (Gemini) · sk-... (OpenAI / Claude)"
+                  }
                   autoComplete="off"
-                  autoFocus
+                  autoFocus={!editingId}
                 />
               </div>
-              {detectedBadge ? (
+              {loadingModels ? (
+                <div className="flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1.5 font-mono text-[11px] text-primary">
+                  <RefreshCw className="size-3.5 shrink-0 animate-spin" />
+                  Interrogation de l&apos;API pour charger les modèles disponibles…
+                </div>
+              ) : detectedBadge ? (
                 <div className="flex items-center gap-1.5 rounded-lg border border-success/30 bg-success/10 px-2.5 py-1.5 font-mono text-[11px] text-success">
                   <CheckCircle2 className="size-3.5 shrink-0" />
                   {detectedBadge}
                 </div>
               ) : !keyReady ? (
                 <p className="text-[11px] text-muted-foreground">
-                  Les modèles disponibles s&apos;affichent dès que la clé est reconnue.
-                  Chiffrée AES-256-GCM côté serveur.
+                  Les modèles compatibles s&apos;affichent dès que la clé est saisie. Chiffrée AES-256-GCM côté serveur.
                 </p>
               ) : (
                 <p className="text-[11px] text-warning">
@@ -475,108 +606,117 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
               )}
             </div>
 
-            {/* ── ÉTAPE 2 : Config (visible seulement après clé) ── */}
+            {/* ── ÉTAPE 2 : Config & Modèles (visible dès que clé prête ou en édition) ── */}
             {keyReady && (
               <>
-            {/* Sélection Fournisseur & Priorité */}
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium">2. Fournisseur détecté</Label>
-                <Select
-                  value={provider}
-                  onValueChange={(v) => handleProviderChange(v as ProviderType)}
-                >
-                  <SelectTrigger className="rounded-xl">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="gemini">Google Gemini (AIza...)</SelectItem>
-                    <SelectItem value="openai">OpenAI (sk-...)</SelectItem>
-                    <SelectItem value="anthropic">Anthropic Claude (sk-ant-...)</SelectItem>
-                    <SelectItem value="openrouter">OpenRouter (sk-or-...)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-medium">Fournisseur</Label>
+                    <Select
+                      value={provider}
+                      disabled={Boolean(editingId)}
+                      onValueChange={(v) => handleProviderChange(v as ProviderType)}
+                    >
+                      <SelectTrigger className="rounded-xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="gemini">Google Gemini (AIza / AQ.)</SelectItem>
+                        <SelectItem value="openai">OpenAI (sk-...)</SelectItem>
+                        <SelectItem value="anthropic">Anthropic Claude (sk-ant-...)</SelectItem>
+                        <SelectItem value="openrouter">OpenRouter (sk-or-...)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium">Priorité de routage</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={priority}
-                  onChange={(e) => setPriority(Number(e.target.value))}
-                  className="rounded-xl font-mono text-xs"
-                />
-                <p className="text-[10px] text-muted-foreground">1 = Priorité la plus haute</p>
-              </div>
-            </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-medium">Priorité de routage</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={priority}
+                      onChange={(e) => setPriority(Number(e.target.value))}
+                      className="rounded-xl font-mono text-xs"
+                    />
+                  </div>
+                </div>
 
-            {/* Libellé */}
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium">Nom / Libellé d&apos;identification</Label>
-              <Input
-                required
-                value={label}
-                onChange={(e) => setLabel(e.target.value)}
-                className="rounded-xl text-xs"
-                placeholder="Ex: Gemini 2.5 Flash Principal"
-              />
-            </div>
+                {/* Libellé */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium">Nom / Libellé</Label>
+                  <Input
+                    required
+                    value={label}
+                    onChange={(e) => setLabel(e.target.value)}
+                    className="rounded-xl text-xs"
+                    placeholder="Ex: Google Gemini Principal"
+                  />
+                </div>
 
-            {/* Modèle principal */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs font-medium">Modèle principal</Label>
-                <span className="font-mono text-[10px] text-primary">{activeProviderConfig.name}</span>
-              </div>
-              <Select value={model} onValueChange={(v) => setModel(v)}>
-                <SelectTrigger className="rounded-xl font-mono text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {activeProviderConfig.models.map((m) => (
-                    <SelectItem key={m.id} value={m.id} className="font-mono text-xs">
-                      <div className="flex flex-col py-0.5">
-                        <span className="font-semibold text-foreground">{m.label}</span>
-                        <span className="text-[10px] text-muted-foreground">{m.desc}</span>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+                {/* Modèle principal */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-medium">Modèle principal</Label>
+                    <button
+                      type="button"
+                      disabled={loadingModels}
+                      onClick={() =>
+                        loadModelsForKey(provider, secret.trim() || undefined, editingId ?? undefined)
+                      }
+                      className="inline-flex items-center gap-1 font-mono text-[10px] text-primary hover:underline"
+                    >
+                      <RefreshCw className={`size-2.5 ${loadingModels ? "animate-spin" : ""}`} />
+                      Actualiser la liste
+                    </button>
+                  </div>
+                  <Select value={model} onValueChange={(v) => setModel(v)}>
+                    <SelectTrigger className="rounded-xl font-mono text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-64">
+                      {modelChoices.map((m) => (
+                        <SelectItem key={m.id} value={m.id} className="font-mono text-xs">
+                          <div className="flex flex-col py-0.5">
+                            <span className="font-semibold text-foreground">{m.id}</span>
+                            <span className="text-[10px] text-muted-foreground">{m.desc}</span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-            {/* Modèle de Secours */}
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium">Modèle de secours (Failover)</Label>
-              <Select value={fallback} onValueChange={(v) => setFallback(v)}>
-                <SelectTrigger className="rounded-xl font-mono text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {activeProviderConfig.models.map((m) => (
-                    <SelectItem key={m.id} value={m.id} className="font-mono text-xs">
-                      {m.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+                {/* Modèle de secours */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium">Modèle de secours (Failover)</Label>
+                  <Select value={fallback} onValueChange={(v) => setFallback(v)}>
+                    <SelectTrigger className="rounded-xl font-mono text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-64">
+                      {fallbackChoices.map((m) => (
+                        <SelectItem key={m.id} value={m.id} className="font-mono text-xs">
+                          {m.id}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-            {/* Limite mensuelle */}
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium">Limite mensuelle de jetons</Label>
-              <Input
-                type="number"
-                min={1000}
-                max={50000000}
-                step={50000}
-                value={limit}
-                onChange={(e) => setLimit(Number(e.target.value))}
-                className="rounded-xl font-mono text-xs"
-              />
-            </div>
+                {/* Limite mensuelle */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium">Limite mensuelle de jetons</Label>
+                  <Input
+                    type="number"
+                    min={1000}
+                    max={10000000}
+                    step={1000}
+                    value={limit}
+                    onChange={(e) => setLimit(Number(e.target.value))}
+                    className="rounded-xl font-mono text-xs"
+                  />
+                </div>
               </>
             )}
 
@@ -587,7 +727,7 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
               </Button>
               <Button
                 type="submit"
-                disabled={busy || !secret.trim() || !keyReady}
+                disabled={busy || (!editingId && !secret.trim()) || !keyReady}
                 className="gap-2 bg-gradient-primary text-primary-foreground font-semibold shadow-glow"
               >
                 {busy ? (
@@ -598,7 +738,11 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
                 ) : (
                   <>
                     <ShieldCheck className="size-4" />
-                    {keyReady ? "Ajouter le fournisseur" : "Collez d'abord votre clé…"}
+                    {editingId
+                      ? "Enregistrer les modifications"
+                      : keyReady
+                      ? "Ajouter le fournisseur"
+                      : "Collez d'abord votre clé…"}
                   </>
                 )}
               </Button>

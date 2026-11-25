@@ -52,30 +52,55 @@ export function selectSpecialistsForRequest(
       (a.allowed_project_ids.length === 0 || !projectId || a.allowed_project_ids.includes(projectId)),
   );
 
-  const matches: AgentRow[] = [];
-  const scoreRules: { slug: string; re: RegExp }[] = [
-    { slug: "software-engineer", re: /code|bug|auth|google|oauth|react|api|commit|pr|github|erreur|login|connexion|build|typescript/ },
-    { slug: "sysadmin-ubuntu", re: /ubuntu|linux|serveur|ssh|docker|systemd|disque|ram|cpu|homelab|infra/ },
-    { slug: "network-engineer", re: /réseau|network|dns|tls|ssl|https|timeout|latence|proxy|nginx|pare-feu|firewall|vpn/ },
-    { slug: "cybersecurity-expert", re: /sécurité|security|secret|rls|permission|vulnérab|token|auth|oauth|fuite|audit/ },
-    { slug: "monitoring-diagnostics", re: /surveill|monitor|incident|dispo|uptime|alerte|5xx|4xx|panne|down|diagnostic/ },
-    { slug: "automation-engineer", re: /automat|telegram|webhook|cron|ci\/cd|pipeline|workflow|bot/ },
-    { slug: "tech-project-manager", re: /plan|phase|priorit|roadmap|projet|synthèse|organis/ },
+  const domainRules: { agentRe: RegExp; promptRe: RegExp }[] = [
+    {
+      agentRe: /full-stack|logiciel|développement|code|api/i,
+      promptRe: /code|bug|auth|google|oauth|react|api|commit|pr|github|erreur|login|connexion|build|typescript|perf|route|front|back/i,
+    },
+    {
+      agentRe: /base de données|sql|postgres|supabase|données/i,
+      promptRe: /base|bdd|sql|postgres|supabase|table|rls|requête|index|migration|donnée/i,
+    },
+    {
+      agentRe: /linux|système|ubuntu|devops|ci\/cd/i,
+      promptRe: /ubuntu|linux|serveur|ssh|docker|systemd|disque|ram|cpu|homelab|infra|deploy|déploi|vercel|build|ci\/cd|pipeline/i,
+    },
+    {
+      agentRe: /réseau|dns|tls|routage/i,
+      promptRe: /réseau|network|dns|tls|ssl|https|timeout|latence|proxy|nginx|pare-feu|firewall|vpn|domaine|port/i,
+    },
+    {
+      agentRe: /surveillance|uptime|observabilité/i,
+      promptRe: /surveill|monitor|dispo|uptime|latence|5xx|4xx|panne|down|sond|sla|perf/i,
+    },
+    {
+      agentRe: /cybersécurité|audit|sécurité/i,
+      promptRe: /sécurité|security|secret|rls|permission|vulnérab|token|auth|oauth|fuite|audit|ssrf|owasp|clé/i,
+    },
+    {
+      agentRe: /crise|incident|triage/i,
+      promptRe: /incident|crise|panne|down|alerte|telegram|urgence|500|502|503|crash/i,
+    },
   ];
 
+  const scored: { agent: AgentRow; score: number }[] = [];
   for (const agent of eligible) {
-    const rule = scoreRules.find((r) => r.slug === agent.slug);
-    const customMatch =
-      !rule &&
-      (p.includes(agent.name.toLowerCase()) ||
-        p.includes(agent.specialty.toLowerCase()) ||
-        (agent.skills ?? []).some((s) => s.length >= 3 && p.includes(s.toLowerCase())));
-    if ((rule && rule.re.test(p)) || customMatch) {
-      matches.push(agent);
+    const agentText = `${agent.name} ${agent.role_title} ${agent.specialty} ${(agent.skills ?? []).join(" ")}`.toLowerCase();
+    let score = 0;
+    for (const rule of domainRules) {
+      if (rule.agentRe.test(agentText) && rule.promptRe.test(p)) {
+        score += 2;
+      }
     }
+    if (p.includes(agent.name.toLowerCase())) score += 3;
+    for (const sk of agent.skills ?? []) {
+      if (sk.length >= 3 && p.includes(sk.toLowerCase())) score += 1;
+    }
+    if (score > 0) scored.push({ agent, score });
   }
 
-  return matches.slice(0, 3);
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, 3).map((s) => s.agent);
 }
 
 export function detectProjectFromPrompt<T extends { id: string; name: string; slug: string; github_repo?: string | null; url?: string | null }>(
@@ -112,6 +137,7 @@ export async function executeMissionPipeline(admin: any, ownerId: string, missio
   if (!mission) throw new Error("Mission introuvable");
   if (mission.status === "cancelled") return mission;
 
+  await admin.from("mission_steps").delete().eq("mission_id", missionId).eq("owner_id", ownerId);
   await admin
     .from("missions")
     .update({ status: "planning", progress: 10, started_at: new Date().toISOString(), updated_at: new Date().toISOString() })
@@ -147,6 +173,20 @@ export async function executeMissionPipeline(admin: any, ownerId: string, missio
       .eq("id", missionId);
 
     // 2. Gather REAL project telemetry (monitors, checks, incidents, GitHub read-only)
+    const { data: telemetryStep } = await admin
+      .from("mission_steps")
+      .insert({
+        mission_id: missionId,
+        owner_id: ownerId,
+        agent_id: lead?.id ?? null,
+        agent_name: lead?.name ?? "Vigilia Lead",
+        step_order: 1,
+        title: "Collecte de télémétrie & contexte réel",
+        status: "running",
+      })
+      .select("id")
+      .single();
+
     const contextFacts: Record<string, unknown> = {
       project: project
         ? {
@@ -192,6 +232,26 @@ export async function executeMissionPipeline(admin: any, ownerId: string, missio
       }
     }
 
+    if (telemetryStep) {
+      const monsCount = Array.isArray(contextFacts["monitors"]) ? (contextFacts["monitors"] as unknown[]).length : 0;
+      const incsCount = Array.isArray(contextFacts["incidents"] ?? contextFacts["open_incidents"])
+        ? ((contextFacts["incidents"] ?? contextFacts["open_incidents"]) as unknown[]).length
+        : 0;
+      const ghSummary = project?.github_repo
+        ? contextFacts["github_inspection"]
+          ? `GitHub (${project.github_repo}) inspecté`
+          : `GitHub indisponible`
+        : "Aucun dépôt GitHub lié";
+      await admin
+        .from("mission_steps")
+        .update({
+          status: "completed",
+          output_summary: `Projet : ${project?.name ?? "Global"} · ${monsCount} contrôle(s) · ${incsCount} incident(s) · ${specialists.length} spécialiste(s) recruté(s) · ${ghSummary}.`,
+          completed_at: new Date().toISOString(),
+        })
+        .eq("id", telemetryStep.id);
+    }
+
     // 3. Execute specialist steps (bounded by max_steps and token_budget)
     let totalTokens = mission.tokens_used ?? 0;
     const maxSteps = Math.min(mission.max_steps ?? 8, 6);
@@ -209,7 +269,7 @@ export async function executeMissionPipeline(admin: any, ownerId: string, missio
           owner_id: ownerId,
           agent_id: sp.id,
           agent_name: sp.name,
-          step_order: i + 1,
+          step_order: i + 2,
           title: `Analyse ${sp.specialty}`,
           status: "running",
         })
@@ -242,7 +302,7 @@ export async function executeMissionPipeline(admin: any, ownerId: string, missio
         owner_id: ownerId,
         agent_id: lead?.id ?? null,
         agent_name: lead?.name ?? "Vigilia Lead",
-        step_order: activeSpecialists.length + 1,
+        step_order: activeSpecialists.length + 2,
         title: "Consolidation & rapport de diagnostic",
         status: "running",
       })
@@ -359,6 +419,11 @@ export async function executeMissionPipeline(admin: any, ownerId: string, missio
     return { status: finalStatus, structured, report: markdownReport };
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Erreur d'exécution de la mission";
+    await admin
+      .from("mission_steps")
+      .update({ status: "failed", output_summary: msg.slice(0, 1000), completed_at: new Date().toISOString() })
+      .eq("mission_id", missionId)
+      .eq("status", "running");
     await admin
       .from("missions")
       .update({ status: "failed", final_report: `## Échec de la mission\n${msg}`, updated_at: new Date().toISOString() })

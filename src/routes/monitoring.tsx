@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -87,6 +87,26 @@ function MonitoringView({ w, refresh }: { w: Workspace; refresh: () => void }) {
   const [checkingId, setCheckingId] = useState<string | null>(null);
   const [form, setForm] = useState<MonForm>(emptyMon());
   const [selectedMonitor, setSelectedMonitor] = useState<Workspace["monitors"][number] | null>(null);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+
+  useEffect(() => {
+    const t = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  function getNextCheckLabel(m: Workspace["monitors"][number]): string {
+    if (!m.enabled) return "En pause";
+    if (!m.last_checked_at) return "Imminent (auto)";
+    const elapsed = nowMs - Date.parse(m.last_checked_at);
+    const remainingSec = Math.max(0, Math.ceil((m.interval_minutes * 60_000 - elapsed) / 1000));
+    if (remainingSec <= 5) return "Déclenchement auto…";
+    if (remainingSec >= 60) {
+      const mins = Math.floor(remainingSec / 60);
+      const secs = remainingSec % 60;
+      return `Prochain dans ${mins}m ${secs}s`;
+    }
+    return `Prochain dans ${remainingSec}s`;
+  }
 
   // Synchroniser le moniteur sélectionné avec les données à jour
   const activeMonitor = selectedMonitor
@@ -324,6 +344,10 @@ function MonitoringView({ w, refresh }: { w: Workspace; refresh: () => void }) {
                             {m.last_response_ms} ms
                           </span>
                         )}
+                        <span className="inline-flex items-center gap-1 rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 font-mono text-[11px] text-primary/90 tabular-nums">
+                          <Timer className="size-3" />
+                          {getNextCheckLabel(m)}
+                        </span>
                       </div>
                     </div>
                   </div>

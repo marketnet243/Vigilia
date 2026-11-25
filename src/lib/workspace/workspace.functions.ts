@@ -73,6 +73,19 @@ export const checkMonitor=createServerFn({method:'POST'}).middleware([ownerOnly]
   const {performCheck,recordResult}=await import('@/lib/monitoring/check');const {supabaseAdmin}=await import('@/integrations/supabase/client.server');
   const r=await performCheck(q.data);await recordResult(supabaseAdmin,q.data,r);return r;
 });
+export const runDueMonitors=createServerFn({method:'POST'}).middleware([ownerOnly]).handler(async({context})=>{
+  const {supabaseAdmin}=await import('@/integrations/supabase/client.server');
+  const {performCheck,recordResult}=await import('@/lib/monitoring/check');
+  const {data:monitors}=await supabaseAdmin.from('monitors').select('*').eq('owner_id',context.userId).eq('enabled',true).limit(50);
+  const now=Date.now();
+  const due=(monitors??[]).filter((m)=>!m.last_checked_at||now-Date.parse(m.last_checked_at)>=m.interval_minutes*60_000-5_000);
+  if(due.length===0) return {checked:0,due:0};
+  let checked=0;
+  for(const m of due.slice(0,10)){
+    try{const r=await performCheck(m);await recordResult(supabaseAdmin,m,r);checked++;}catch(e){console.error('auto check failed',m.id,e);}
+  }
+  return {checked,due:due.length};
+});
 export const decideApproval=createServerFn({method:'POST'}).middleware([ownerOnly]).inputValidator(z.object({id:z.uuid(),approve:z.boolean(),note:z.string().max(2000).default('')})).handler(async({data,context})=>{
   const q=await context.supabase.from('approvals').select('*').eq('id',data.id).single();if(q.error||!approvalIsUsable(q.data))throw new Error('Approbation expirée ou déjà décidée.');
   const {supabaseAdmin}=await import('@/integrations/supabase/client.server');
@@ -98,4 +111,99 @@ export const deleteProvider=createServerFn({method:'POST'}).middleware([ownerOnl
   const {data:row}=await supabaseAdmin.from('ai_provider_keys').select('provider').eq('id',data.id).eq('owner_id',context.userId).single();
   if(row?.provider==='lovable_gateway') throw new Error('La passerelle IA intégrée peut être désactivée, pas supprimée.');
   const q=await supabaseAdmin.from('ai_provider_keys').delete().eq('id',data.id).eq('owner_id',context.userId);if(q.error)throw new Error(q.error.message);return {ok:true};
+});
+export const updateProvider=createServerFn({method:'POST'}).middleware([ownerOnly]).inputValidator(z.object({
+  id:z.uuid(),
+  label:z.string().trim().min(1).max(120),
+  model_default:z.string().trim().min(1).max(120),
+  fallback_model:z.string().max(120).nullable().default(null),
+  priority:z.number().int().min(1).max(100),
+  monthly_token_limit:z.number().int().min(1000).max(10000000),
+  secret:z.string().max(500).optional(),
+})).handler(async({data,context})=>{
+  const {supabaseAdmin}=await import('@/integrations/supabase/client.server');
+  const patch:Record<string,unknown>={
+    label:data.label,
+    model_default:data.model_default,
+    fallback_model:data.fallback_model||null,
+    priority:data.priority,
+    monthly_token_limit:data.monthly_token_limit,
+    consecutive_failures:0,
+    circuit_open_until:null,
+    last_error_message:null,
+    status:'active',
+  };
+  if(data.secret&&data.secret.trim().length>=12){
+    const {encryptSecret,fingerprintSecret}=await import('@/lib/crypto.server');
+    const clean=data.secret.trim();
+    patch['encrypted_secret']=await encryptSecret(clean);
+    patch['key_fingerprint']=fingerprintSecret(clean);
+  }
+  const q=await supabaseAdmin.from('ai_provider_keys').update(patch).eq('id',data.id).eq('owner_id',context.userId).select('id').single();
+  if(q.error)throw new Error(q.error.message);
+  return {ok:true};
+});
+export const fetchProviderModels=createServerFn({method:'POST'}).middleware([ownerOnly]).inputValidator(z.object({
+  provider:z.enum(['openai','gemini','anthropic','openrouter']),
+  secret:z.string().max(500).optional(),
+  providerId:z.uuid().optional(),
+})).handler(async({data,context})=>{
+  let apiKey=data.secret?.trim()??'';
+  if(!apiKey&&data.providerId){
+    const {supabaseAdmin}=await import('@/integrations/supabase/client.server');
+    const {decryptSecret}=await import('@/lib/crypto.server');
+    const q=await supabaseAdmin.from('ai_provider_keys').select('encrypted_secret').eq('id',data.providerId).eq('owner_id',context.userId).single();
+    if(q.data?.encrypted_secret) apiKey=await decryptSecret(q.data.encrypted_secret);
+  }
+  if(!apiKey) return {live:false,models:[] as {id:string;label:string;desc:string}[],error:'Clé requise'};
+  try{
+    if(data.provider==='gemini'){
+      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}&pageSize=100`,{signal:AbortSignal.timeout(10000)});
+      if(!res.ok) return {live:false,models:[],error:`Gemini ${res.status}`};
+      const json=(await res.json()) as {models?:{name:string;displayName?:string;description?:string;supportedGenerationMethods?:string[]}[]};
+      const models=(json.models??[])
+        .filter((m)=>(m.supportedGenerationMethods??[]).includes('generateContent')&&m.name.includes('gemini'))
+        .map((m)=>({
+          id:m.name.replace(/^models\//,''),
+          label:m.displayName||m.name.replace(/^models\//,''),
+          desc:(m.description??'Modèle Google Gemini').slice(0,90),
+        }))
+        .sort((a,b)=>{
+          const score=(id:string)=>(id.includes('3.8')?100:id.includes('3.1')?90:id.includes('3.')?80:id.includes('2.5')?70:id.includes('2.0')?60:10)+(id.includes('flash')?5:0);
+          return score(b.id)-score(a.id);
+        });
+      return {live:true,models};
+    }
+    if(data.provider==='openai'){
+      const res=await fetch('https://api.openai.com/v1/models',{headers:{Authorization:`Bearer ${apiKey}`},signal:AbortSignal.timeout(10000)});
+      if(!res.ok) return {live:false,models:[],error:`OpenAI ${res.status}`};
+      const json=(await res.json()) as {data?:{id:string}[]};
+      const models=(json.data??[])
+        .filter((m)=>/^(gpt-|o1|o3|o4)/.test(m.id)&&!/audio|realtime|tts|whisper|embedding|search|transcribe|image/.test(m.id))
+        .map((m)=>({id:m.id,label:m.id,desc:'Modèle OpenAI vérifié'}))
+        .sort((a,b)=>b.id.localeCompare(a.id))
+        .slice(0,25);
+      return {live:true,models};
+    }
+    if(data.provider==='anthropic'){
+      const res=await fetch('https://api.anthropic.com/v1/models',{headers:{'x-api-key':apiKey,'anthropic-version':'2023-06-01'},signal:AbortSignal.timeout(10000)});
+      if(!res.ok) return {live:false,models:[],error:`Anthropic ${res.status}`};
+      const json=(await res.json()) as {data?:{id:string;display_name?:string}[]};
+      const models=(json.data??[]).map((m)=>({id:m.id,label:m.display_name||m.id,desc:'Modèle Anthropic Claude vérifié'}));
+      return {live:true,models};
+    }
+    if(data.provider==='openrouter'){
+      const res=await fetch('https://openrouter.ai/api/v1/models',{headers:{Authorization:`Bearer ${apiKey}`},signal:AbortSignal.timeout(10000)});
+      if(!res.ok) return {live:false,models:[],error:`OpenRouter ${res.status}`};
+      const json=(await res.json()) as {data?:{id:string;name?:string}[]};
+      const preferred=['anthropic/claude-sonnet-4','anthropic/claude-3.5-sonnet','google/gemini-2.5-flash','openai/gpt-4o','meta-llama/llama-3.3-70b-instruct'];
+      const all=json.data??[];
+      const picked=all.filter((m)=>preferred.some((p)=>m.id.includes(p))||m.id.includes('gemini-3')||m.id.includes('gpt-4.1')).slice(0,25);
+      const list=picked.length?picked:all.slice(0,20);
+      return {live:true,models:list.map((m)=>({id:m.id,label:m.name||m.id,desc:'Via OpenRouter'}))};
+    }
+  }catch(e){
+    return {live:false,models:[],error:e instanceof Error?e.message:'Erreur réseau'};
+  }
+  return {live:false,models:[]};
 });

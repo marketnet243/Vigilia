@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { Ban, Check, GitBranch, Play, Plus, Rocket, ShieldCheck, X } from "lucide-react";
+import { Ban, Check, CheckCircle2, ChevronDown, ChevronUp, Clock, GitBranch, Play, Plus, RefreshCw, Rocket, ShieldCheck, X, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app/shell";
 import { Md } from "@/components/app/md";
@@ -39,6 +39,7 @@ function MissionsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
   const [priority, setPriority] = useState<"low" | "medium" | "high" | "critical">("medium");
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [branchInput, setBranchInput] = useState<Record<string, { base: string; next: string }>>({});
+  const [expandedSteps, setExpandedSteps] = useState<Record<string, boolean>>({});
 
   const selected = w.missions.find((m) => m.id === selectedId) ?? w.missions[0] ?? null;
   const selectedSteps = selected ? w.steps.filter((s) => s.mission_id === selected.id) : [];
@@ -205,27 +206,117 @@ function MissionsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-4 pt-4">
+                    {/* Barre de progression globale */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between font-mono text-[11px] text-muted-foreground">
+                        <span>Progression de l&apos;orchestration</span>
+                        <span className="font-semibold text-foreground">{selected.progress ?? 0}%</span>
+                      </div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-border/50">
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${
+                            selected.status === "failed"
+                              ? "bg-destructive"
+                              : selected.status === "completed"
+                              ? "bg-success"
+                              : "bg-gradient-primary"
+                          }`}
+                          style={{ width: `${Math.max(4, selected.progress ?? 0)}%` }}
+                        />
+                      </div>
+                    </div>
+
                     {selectedSteps.length > 0 && (
                       <div className="space-y-2.5">
                         <h4 className="font-mono text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                          Étapes d&apos;exécution ({selectedSteps.length})
+                          Pipeline d&apos;exécution ({selectedSteps.length} étape{selectedSteps.length > 1 ? "s" : ""})
                         </h4>
-                        {selectedSteps.map((st) => (
-                          <div key={st.id} className="rounded-xl border border-border/70 bg-background/50 p-3.5 text-xs">
-                            <div className="flex items-center justify-between gap-2 font-medium">
-                              <span className="flex items-center gap-2">
-                                <span className="flex size-5 items-center justify-center rounded-md bg-primary/15 font-mono text-[11px] text-primary">
-                                  {st.step_order}
-                                </span>
-                                <span>{st.agent_name} — {st.title}</span>
-                              </span>
-                              <span className="rounded-full border border-border px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
-                                {st.status}
-                              </span>
-                            </div>
-                            {st.output_summary && <p className="mt-2 line-clamp-4 leading-relaxed text-muted-foreground">{st.output_summary}</p>}
-                          </div>
-                        ))}
+                        <div className="relative space-y-2.5 pl-3 before:absolute before:bottom-3 before:left-[18px] before:top-3 before:w-px before:bg-border/60">
+                          {selectedSteps.map((st) => {
+                            const isRunning = st.status === "running";
+                            const isDone = st.status === "completed";
+                            const isFailed = st.status === "failed";
+                            const isExpanded = Boolean(expandedSteps[st.id]);
+                            const statusLabel = isDone
+                              ? "Terminée"
+                              : isRunning
+                              ? "En cours"
+                              : isFailed
+                              ? "Échec"
+                              : "En attente";
+                            const statusStyle = isDone
+                              ? "border-success/30 bg-success/10 text-success"
+                              : isRunning
+                              ? "border-primary/40 bg-primary/15 text-primary"
+                              : isFailed
+                              ? "border-destructive/30 bg-destructive/10 text-destructive"
+                              : "border-border bg-secondary/40 text-muted-foreground";
+
+                            return (
+                              <div key={st.id} className="relative rounded-xl border border-border/70 bg-background/55 p-3.5 text-xs transition-colors hover:border-border">
+                                <div className="flex flex-wrap items-center justify-between gap-2 font-medium">
+                                  <span className="flex items-center gap-2 min-w-0">
+                                    <span
+                                      className={`flex size-6 shrink-0 items-center justify-center rounded-lg border font-mono text-[11px] font-bold ${
+                                        isDone
+                                          ? "border-success/40 bg-success/15 text-success"
+                                          : isRunning
+                                          ? "border-primary/50 bg-primary/20 text-primary"
+                                          : isFailed
+                                          ? "border-destructive/40 bg-destructive/15 text-destructive"
+                                          : "border-border bg-secondary/50 text-muted-foreground"
+                                      }`}
+                                    >
+                                      {isDone ? (
+                                        <CheckCircle2 className="size-3.5" />
+                                      ) : isRunning ? (
+                                        <RefreshCw className="size-3.5 animate-spin" />
+                                      ) : isFailed ? (
+                                        <XCircle className="size-3.5" />
+                                      ) : (
+                                        st.step_order
+                                      )}
+                                    </span>
+                                    <span className="truncate">
+                                      <span className="font-semibold text-foreground">{st.agent_name}</span>
+                                      <span className="text-muted-foreground"> — {st.title}</span>
+                                    </span>
+                                  </span>
+                                  <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[10px] font-medium ${statusStyle}`}>
+                                    {!isDone && !isRunning && !isFailed && <Clock className="size-2.5" />}
+                                    {statusLabel}
+                                  </span>
+                                </div>
+                                {st.output_summary && (
+                                  <div className="mt-2.5 pl-8">
+                                    <p className={`leading-relaxed text-muted-foreground whitespace-pre-wrap ${isExpanded ? "" : "line-clamp-3"}`}>
+                                      {st.output_summary}
+                                    </p>
+                                    {st.output_summary.length > 180 && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setExpandedSteps((prev) => ({ ...prev, [st.id]: !isExpanded }))
+                                        }
+                                        className="mt-1 inline-flex items-center gap-1 font-mono text-[10px] text-primary hover:underline"
+                                      >
+                                        {isExpanded ? (
+                                          <>
+                                            <ChevronUp className="size-3" /> Réduire
+                                          </>
+                                        ) : (
+                                          <>
+                                            <ChevronDown className="size-3" /> Voir le détail complet
+                                          </>
+                                        )}
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
                     {selected.final_report && (

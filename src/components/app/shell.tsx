@@ -1,6 +1,7 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
 import {
   LayoutDashboard, Bot, Users, FolderKanban, ShieldCheck, Activity,
   Plug, Cpu, ScrollText, Settings, LogOut, Menu, Shield, AlertTriangle, RefreshCw,
@@ -8,7 +9,7 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { useOwner } from "@/hooks/use-owner";
 import { workspaceQuery } from "@/lib/workspace/query";
-import type { Workspace } from "@/lib/workspace/workspace.functions";
+import { runDueMonitors, type Workspace } from "@/lib/workspace/workspace.functions";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
@@ -53,6 +54,45 @@ export function AppShell({ children }: { children: (w: Workspace, refetch: () =>
 
   const owner = useOwner();
   const ws = useQuery({ ...workspaceQuery(), enabled: owner.isSuccess });
+  const triggerDueChecks = useServerFn(runDueMonitors);
+  const checkingRef = useRef(false);
+
+  // Planificateur automatique de surveillance : déclenche les contrôles selon leur interval_minutes
+  useEffect(() => {
+    if (!ws.data) return;
+    const monitors = ws.data.monitors;
+    if (!monitors.some((m) => m.enabled)) return;
+
+    async function checkIfDue() {
+      if (checkingRef.current) return;
+      const now = Date.now();
+      const hasDue = monitors.some(
+        (m) =>
+          m.enabled &&
+          (!m.last_checked_at || now - Date.parse(m.last_checked_at) >= m.interval_minutes * 60_000 - 3_000),
+      );
+      if (!hasDue) return;
+
+      checkingRef.current = true;
+      try {
+        const res = await triggerDueChecks({});
+        if (res.checked > 0) {
+          void ws.refetch();
+        }
+      } catch {
+        // Silencieux en arrière-plan pour ne pas perturber l'utilisateur
+      } finally {
+        checkingRef.current = false;
+      }
+    }
+
+    const initTimer = setTimeout(() => void checkIfDue(), 2000);
+    const interval = setInterval(() => void checkIfDue(), 15_000);
+    return () => {
+      clearTimeout(initTimer);
+      clearInterval(interval);
+    };
+  }, [ws.data, triggerDueChecks, ws]);
 
   useEffect(() => {
     if (owner.isError) void navigate({ to: "/login" });
