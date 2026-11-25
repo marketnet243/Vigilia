@@ -1,0 +1,15 @@
+{
+  "source": "github:https://github.com/Landry-kayoyo/vigilia-command-center-98e3812d.git",
+  "capabilities": [
+    { "capability": "code", "source": "github", "outcome": "migrate", "status": "implemented", "next_action": "Verify live UI flows in browser once credits are available" },
+    { "capability": "schema", "source": "drizzle/migrations/0000_vigilia_schema.sql", "outcome": "migrate", "status": "verified", "next_action": "None" },
+    { "capability": "records", "source": "absent", "outcome": "migrate", "status": "pending", "next_action": "Request CSV/JSON export after preview if user has previous data" },
+    { "capability": "auth_identities", "source": "workspace_access", "outcome": "migrate", "status": "implemented", "next_action": "Sign in as Kayoyolandry@gmail.com to verify live owner session" },
+    { "capability": "authorization", "source": "user_roles + RLS", "outcome": "migrate", "status": "implemented", "next_action": "Verify live owner RLS session" },
+    { "capability": "scheduled_checks", "source": "/api/public/jobs/run-checks", "outcome": "migrate", "status": "verified", "next_action": "Scheduled every 5 minutes (id 1)" },
+    { "capability": "telegram_webhook", "source": "/api/public/telegram/webhook", "outcome": "preserve", "status": "implemented", "next_action": "Connect user Telegram bot token in Integrations to verify live webhook" },
+    { "capability": "github_integration", "source": "src/lib/github/client.server.ts", "outcome": "preserve", "status": "implemented", "next_action": "Test public/private repo inspection in Integrations" },
+    { "capability": "ai_orchestrator", "source": "@lovable.dev/ai-gateway", "outcome": "preserve", "status": "implemented", "next_action": "Verify live assistant and mission run after sign-in" },
+    { "capability": "verification", "source": "vitest + playwright", "outcome": "verify", "status": "pending", "next_action": "Unit tests run; browser/preview verification paused due to credits" }
+  ]
+}

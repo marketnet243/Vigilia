@@ -28,3 +28,4 @@ use the editor.
   own key and store it in Secrets.
 - **Secrets.** Lovable manages them. Do not put secret values in the repo.
 <!-- LOVABLE:END -->
+- Telegram webhooks are registered on the public dev host (src/lib/telegram/webhook-url.ts) because the editor preview host is auth-gated.
