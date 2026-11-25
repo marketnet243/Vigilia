@@ -21,10 +21,10 @@ import {
   ShieldAlert,
   Terminal,
   Code2,
-  Cpu,
   Send,
   Sparkles,
   Layers,
+  Lock,
 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app/shell";
@@ -36,37 +36,29 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  AGENT_DOMAIN_META,
+  ALL_TOOL_IDS,
+  TOOL_META,
+  getToolLabel,
+  getAgentDomainName,
+  getDomainBadgeStyle,
+} from "@/lib/agents/agent-config";
 
-export const AGENT_DOMAINS = [
-  { key: "all", label: "Tous", icon: Layers, match: [] },
-  { key: "orchestration", label: "Orchestration", icon: Crown, match: ["orchestration", "lead"] },
-  { key: "dev", label: "Développement", icon: Code2, match: ["développement", "dev", "full-stack", "données"] },
-  { key: "system", label: "Systèmes & DevOps", icon: Terminal, match: ["système", "sysadmin", "linux", "ubuntu", "devops", "docker"] },
-  { key: "network", label: "Réseaux & DNS", icon: Network, match: ["réseau", "dns", "tls", "surveillance", "uptime"] },
-  { key: "security", label: "Cybersécurité", icon: ShieldAlert, match: ["sécurité", "cyber", "audit", "incident", "crise"] },
-] as const;
+// Map iconName → Lucide component (résolue côté client uniquement, pas exportée)
+const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
+  Layers, Crown, Code2, Terminal, Network, ShieldAlert,
+  Search, Eye, Pencil, GitBranch, Database, Activity,
+  Globe, AlertTriangle, ShieldCheck, Send, Wrench, Bot, Sparkles, Lock, RefreshCw,
+};
 
-export const ALL_TOOLS = [
-  { id: "project_context", label: "Contexte projet", category: "Core", icon: Search },
-  { id: "github_read", label: "Lecture GitHub", category: "Code", icon: Eye },
-  { id: "prepare_patch", label: "Préparation de patch", category: "Code", icon: Pencil },
-  { id: "git_branch_manager", label: "Gestion de branches", category: "Code", icon: GitBranch },
-  { id: "database_query", label: "Inspection Base SQL", category: "Données", icon: Database },
-  { id: "monitoring_read", label: "Lecture Surveillance", category: "Réseau", icon: Activity },
-  { id: "network_ping", label: "Ping & Latence", category: "Réseau", icon: Network },
-  { id: "dns_lookup", label: "Résolution DNS", category: "Réseau", icon: Globe },
-  { id: "incident_read", label: "Historique Incidents", category: "Sécurité", icon: AlertTriangle },
-  { id: "security_scan", label: "Audit Sécurité & Secrets", category: "Sécurité", icon: ShieldAlert },
-  { id: "audit_read", label: "Journal d'audit", category: "Sécurité", icon: ShieldCheck },
-  { id: "telegram_notify", label: "Alerte Telegram d'urgence", category: "Alerting", icon: Send },
-  { id: "integration_check", label: "Contrôle Intégrations", category: "Infra", icon: Wrench },
-  { id: "log_analyzer", label: "Analyseur de logs", category: "Infra", icon: Terminal },
-  { id: "memory_read", label: "Lecture Mémoire IA", category: "Mémoire", icon: Bot },
-  { id: "memory_write", label: "Écriture Mémoire IA", category: "Mémoire", icon: Sparkles },
-  { id: "request_approval", label: "Demande d'approbation", category: "Gouvernance", icon: Crown },
-] as const;
+function Icon({ name, className }: { name: string; className?: string }) {
+  const C = ICON_MAP[name] ?? Bot;
+  return <C className={className} />;
+}
 
 export const Route = createFileRoute("/agents")({
   head: () =>
@@ -102,52 +94,23 @@ const emptyForm = (): FormState => ({
   enabled: true,
 });
 
-function getAgentDomain(a: AgentItem): string {
-  const text = `${a.specialty} ${a.role_title} ${a.name}`.toLowerCase();
-  if (text.includes("orchestration") || a.is_lead) return "Orchestration";
-  if (text.includes("sécurité") || text.includes("cyber") || text.includes("incident") || text.includes("crise"))
-    return "Cybersécurité";
-  if (text.includes("système") || text.includes("linux") || text.includes("devops") || text.includes("docker"))
-    return "Systèmes & DevOps";
-  if (text.includes("réseau") || text.includes("dns") || text.includes("surveillance") || text.includes("uptime"))
-    return "Réseaux & DNS";
-  return "Développement";
-}
-
-function getDomainBadgeStyle(domain: string) {
-  switch (domain) {
-    case "Orchestration":
-      return "border-primary/40 bg-primary/10 text-primary";
-    case "Développement":
-      return "border-blue-500/40 bg-blue-500/10 text-blue-400";
-    case "Systèmes & DevOps":
-      return "border-emerald-500/40 bg-emerald-500/10 text-emerald-400";
-    case "Réseaux & DNS":
-      return "border-purple-500/40 bg-purple-500/10 text-purple-400";
-    case "Cybersécurité":
-      return "border-red-500/40 bg-red-500/10 text-red-400";
-    default:
-      return "border-border bg-secondary/50 text-muted-foreground";
-  }
-}
-
 function AgentsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
   const save = useServerFn(saveRecord);
   const del = useServerFn(deleteRecord);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm());
-  const [activeDomainFilter, setActiveDomainFilter] = useState<string>("all");
+  const [activeDomain, setActiveDomain] = useState<string>("all");
 
   function openEdit(a: AgentItem) {
     const p = (a.permissions ?? {}) as Record<string, boolean>;
     setForm({
       id: a.id,
-      name: a.name,
-      role_title: a.role_title,
-      specialty: a.specialty,
-      domain: getAgentDomain(a),
-      instructions: a.instructions,
+      name: a.name ?? "",
+      role_title: a.role_title ?? "",
+      specialty: a.specialty ?? "",
+      domain: getAgentDomainName(a.specialty ?? "", a.role_title ?? "", a.name ?? "", a.is_lead),
+      instructions: a.instructions ?? "",
       skills: Array.isArray(a.skills) ? (a.skills as string[]).join(", ") : "",
       tools: Array.isArray(a.tools) ? (a.tools as string[]) : [],
       allowed_project_ids: a.allowed_project_ids ?? [],
@@ -169,19 +132,23 @@ function AgentsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
       const formattedSpecialty = form.specialty.startsWith("[")
         ? form.specialty
         : `[${form.domain}] ${form.specialty}`;
-
-      const values = {
-        name: form.name,
-        role_title: form.role_title,
-        specialty: formattedSpecialty,
-        instructions: form.instructions,
-        skills: form.skills.split(",").map((s) => s.trim()).filter(Boolean),
-        tools: form.tools,
-        allowed_project_ids: form.allowed_project_ids,
-        permissions: form.permissions,
-        enabled: form.enabled,
-      };
-      await save({ data: { kind: "agent", ...(form.id ? { id: form.id } : {}), values } });
+      await save({
+        data: {
+          kind: "agent",
+          ...(form.id ? { id: form.id } : {}),
+          values: {
+            name: form.name,
+            role_title: form.role_title,
+            specialty: formattedSpecialty,
+            instructions: form.instructions,
+            skills: form.skills.split(",").map((s) => s.trim()).filter(Boolean),
+            tools: form.tools,
+            allowed_project_ids: form.allowed_project_ids,
+            permissions: form.permissions,
+            enabled: form.enabled,
+          },
+        },
+      });
       toast.success(form.id ? "Agent mis à jour." : "Agent créé avec succès.");
       setOpen(false);
       refresh();
@@ -200,10 +167,10 @@ function AgentsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
           kind: "agent",
           id: a.id,
           values: {
-            name: a.name,
-            role_title: a.role_title,
-            specialty: a.specialty,
-            instructions: a.instructions,
+            name: a.name ?? "",
+            role_title: a.role_title ?? "",
+            specialty: a.specialty ?? "",
+            instructions: a.instructions ?? "",
             skills: Array.isArray(a.skills) ? a.skills : [],
             tools: Array.isArray(a.tools) ? a.tools : [],
             allowed_project_ids: a.allowed_project_ids ?? [],
@@ -233,13 +200,25 @@ function AgentsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
     }
   }
 
-  // Filtrage par domaine
+  // Domaines : calculer count
+  const domains = Object.entries(AGENT_DOMAIN_META).map(([key, meta]) => {
+    const count =
+      key === "all"
+        ? w.agents.length
+        : w.agents.filter((a) => {
+            const hay = `${a.specialty ?? ""} ${a.role_title ?? ""} ${a.name ?? ""}`.toLowerCase();
+            return meta.match.some((m) => hay.includes(m));
+          }).length;
+    return { key, ...meta, count };
+  });
+
+  // Filtrage
   const filteredAgents = w.agents.filter((a) => {
-    if (activeDomainFilter === "all") return true;
-    const dom = AGENT_DOMAINS.find((d) => d.key === activeDomainFilter);
-    if (!dom) return true;
-    const hay = `${a.specialty} ${a.role_title} ${a.name}`.toLowerCase();
-    return dom.match.some((m) => hay.includes(m));
+    if (activeDomain === "all") return true;
+    const meta = AGENT_DOMAIN_META[activeDomain as keyof typeof AGENT_DOMAIN_META];
+    if (!meta) return true;
+    const hay = `${a.specialty ?? ""} ${a.role_title ?? ""} ${a.name ?? ""}`.toLowerCase();
+    return meta.match.some((m) => hay.includes(m));
   });
 
   return (
@@ -250,10 +229,7 @@ function AgentsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
       >
         <Button
           size="sm"
-          onClick={() => {
-            setForm(emptyForm());
-            setOpen(true);
-          }}
+          onClick={() => { setForm(emptyForm()); setOpen(true); }}
           className="gap-2 bg-gradient-primary text-primary-foreground shadow-glow"
         >
           <Plus className="size-3.5" />
@@ -261,40 +237,29 @@ function AgentsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
         </Button>
       </PageHeader>
 
-      {/* Barre de filtres par Domaine */}
+      {/* Filtres par domaine */}
       <div className="flex flex-wrap gap-2">
-        {AGENT_DOMAINS.map((d) => {
-          const Icon = d.icon;
-          const count =
-            d.key === "all"
-              ? w.agents.length
-              : w.agents.filter((a) => {
-                  const hay = `${a.specialty} ${a.role_title} ${a.name}`.toLowerCase();
-                  return d.match.some((m) => hay.includes(m));
-                }).length;
-
-          return (
-            <button
-              key={d.key}
-              type="button"
-              onClick={() => setActiveDomainFilter(d.key)}
-              className={`flex items-center gap-2 rounded-xl border px-3 py-1.5 font-mono text-xs transition-all ${
-                activeDomainFilter === d.key
-                  ? "border-primary/50 bg-primary/15 text-primary shadow-glow font-semibold"
-                  : "border-border/60 bg-background/40 text-muted-foreground hover:border-border hover:text-foreground"
-              }`}
-            >
-              <Icon className="size-3.5" />
-              <span>{d.label}</span>
-              <span className="rounded-full bg-background/60 px-1.5 py-0.2 text-[10px] text-muted-foreground">
-                {count}
-              </span>
-            </button>
-          );
-        })}
+        {domains.map((d) => (
+          <button
+            key={d.key}
+            type="button"
+            onClick={() => setActiveDomain(d.key)}
+            className={`flex items-center gap-2 rounded-xl border px-3 py-1.5 font-mono text-xs transition-all ${
+              activeDomain === d.key
+                ? "border-primary/50 bg-primary/15 text-primary shadow-glow font-semibold"
+                : "border-border/60 bg-background/40 text-muted-foreground hover:border-border hover:text-foreground"
+            }`}
+          >
+            <Icon name={d.iconName} className="size-3.5" />
+            <span>{d.label}</span>
+            <span className="rounded-full bg-background/60 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              {d.count}
+            </span>
+          </button>
+        ))}
       </div>
 
-      {/* Grille des Agents */}
+      {/* Grille des agents */}
       {filteredAgents.length === 0 ? (
         <div className="glass-card flex flex-col items-center justify-center gap-3 rounded-2xl py-14 text-center">
           <div className="flex size-14 items-center justify-center rounded-full bg-primary/10 ring-1 ring-primary/20">
@@ -308,7 +273,7 @@ function AgentsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {filteredAgents.map((a) => {
-            const domainName = getAgentDomain(a);
+            const domainName = getAgentDomainName(a.specialty ?? "", a.role_title ?? "", a.name ?? "", a.is_lead);
             const badgeCls = getDomainBadgeStyle(domainName);
             const agentTools = Array.isArray(a.tools) ? (a.tools as string[]) : [];
 
@@ -319,10 +284,10 @@ function AgentsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
                   !a.enabled ? "opacity-55" : ""
                 }`}
               >
-                {/* Ligne d'accent lumineuse */}
+                {/* Accent line */}
                 <div className="absolute inset-x-0 top-0 h-[2px] rounded-t-2xl bg-gradient-primary opacity-0 transition-opacity group-hover:opacity-70" />
 
-                {/* En-tête agent */}
+                {/* Header */}
                 <div className="mb-3 flex items-start justify-between gap-2">
                   <div className="flex items-start gap-2.5 min-w-0">
                     <div
@@ -339,46 +304,43 @@ function AgentsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-1.5">
                         <StatusDot status={a.enabled ? "active" : "disabled"} />
-                        <span className="font-semibold text-sm truncate">{a.name}</span>
+                        <span className="font-semibold text-sm truncate">{a.name ?? "—"}</span>
                         {a.is_lead && (
                           <span className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/15 px-2 py-0.5 font-mono text-[10px] text-primary font-bold">
                             <Crown className="size-2.5" /> LEAD
                           </span>
                         )}
-                        <span
-                          className={`inline-flex items-center rounded-full border px-2 py-0.5 font-mono text-[10px] font-medium ${badgeCls}`}
-                        >
+                        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 font-mono text-[10px] font-medium ${badgeCls}`}>
                           {domainName}
                         </span>
                       </div>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        {a.role_title}
+                      <p className="mt-0.5 text-xs text-muted-foreground line-clamp-1">
+                        {a.role_title ?? ""}
                       </p>
                     </div>
                   </div>
-
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    <Switch
-                      checked={a.enabled}
-                      disabled={a.is_lead}
-                      onCheckedChange={(v) => toggleEnabled(a, v)}
-                      aria-label={`Activer ${a.name}`}
-                    />
-                  </div>
+                  <Switch
+                    checked={a.enabled}
+                    disabled={a.is_lead}
+                    onCheckedChange={(v) => toggleEnabled(a, v)}
+                    aria-label={`Activer ${a.name ?? "agent"}`}
+                  />
                 </div>
 
-                {/* Spécialité & Instructions */}
+                {/* Spécialité */}
                 <div className="mb-2 font-mono text-[11px] text-foreground/80 line-clamp-1">
-                  🎯 {a.specialty}
+                  🎯 {a.specialty ?? ""}
                 </div>
+
+                {/* Instructions */}
                 <p className="mb-3 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-                  {a.instructions}
+                  {a.instructions ?? ""}
                 </p>
 
-                {/* Compétences (Skills) */}
+                {/* Skills */}
                 {Array.isArray(a.skills) && (a.skills as string[]).length > 0 && (
                   <div className="mb-3 flex flex-wrap gap-1">
-                    {(a.skills as string[]).map((sk) => (
+                    {(a.skills as string[]).slice(0, 5).map((sk) => (
                       <span
                         key={sk}
                         className="rounded-full border border-border/50 bg-background/40 px-2 py-0.5 font-mono text-[10px] text-muted-foreground"
@@ -386,34 +348,35 @@ function AgentsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
                         {sk}
                       </span>
                     ))}
+                    {(a.skills as string[]).length > 5 && (
+                      <span className="font-mono text-[10px] text-muted-foreground">
+                        +{(a.skills as string[]).length - 5}
+                      </span>
+                    )}
                   </div>
                 )}
 
-                {/* Outils associés & Actions */}
+                {/* Outils + actions */}
                 <div className="flex items-center justify-between border-t border-border/40 pt-2.5">
                   <div className="flex flex-wrap items-center gap-1">
                     <span className="flex items-center gap-1 font-mono text-[11px] text-muted-foreground mr-1">
                       <Wrench className="size-3 text-primary" />
-                      {agentTools.length} outil(s) :
+                      {agentTools.length} outil(s)
                     </span>
-                    {agentTools.slice(0, 3).map((tId) => {
-                      const tDef = ALL_TOOLS.find((t) => t.id === tId);
-                      return (
-                        <span
-                          key={tId}
-                          className="rounded border border-primary/20 bg-primary/5 px-1.5 py-0.2 font-mono text-[10px] text-primary"
-                        >
-                          {tDef?.label ?? tId}
-                        </span>
-                      );
-                    })}
+                    {agentTools.slice(0, 3).map((tId) => (
+                      <span
+                        key={tId}
+                        className="rounded border border-primary/20 bg-primary/5 px-1.5 py-0.5 font-mono text-[10px] text-primary"
+                      >
+                        {getToolLabel(tId)}
+                      </span>
+                    ))}
                     {agentTools.length > 3 && (
                       <span className="font-mono text-[10px] text-muted-foreground">
                         +{agentTools.length - 3}
                       </span>
                     )}
                   </div>
-
                   <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                     <Button
                       size="sm"
@@ -443,7 +406,7 @@ function AgentsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
         </div>
       )}
 
-      {/* ── MODALE FORMULAIRE PROPRE : CRÉATION / MODIFICATION D'AGENT ── */}
+      {/* ── MODALE CRÉATION / ÉDITION AGENT ── */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[92vh] max-w-xl overflow-y-auto">
           <DialogHeader>
@@ -473,7 +436,7 @@ function AgentsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
                   value={form.role_title}
                   onChange={(e) => setForm({ ...form, role_title: e.target.value })}
                   className="rounded-xl text-xs"
-                  placeholder="Ex: Expert Infrastructure & Terraform"
+                  placeholder="Ex: Expert Infrastructure"
                 />
               </div>
             </div>
@@ -482,10 +445,7 @@ function AgentsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label className="text-xs font-medium">Domaine d&apos;expertise</Label>
-                <Select
-                  value={form.domain}
-                  onValueChange={(v) => setForm({ ...form, domain: v })}
-                >
+                <Select value={form.domain} onValueChange={(v) => setForm({ ...form, domain: v })}>
                   <SelectTrigger className="rounded-xl text-xs">
                     <SelectValue />
                   </SelectTrigger>
@@ -498,7 +458,6 @@ function AgentsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
                   </SelectContent>
                 </Select>
               </div>
-
               <div className="space-y-1.5">
                 <Label className="text-xs font-medium">Spécialité technique</Label>
                 <Input
@@ -511,22 +470,22 @@ function AgentsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
               </div>
             </div>
 
-            {/* Instructions Système */}
+            {/* Instructions */}
             <div className="space-y-1.5">
-              <Label className="text-xs font-medium">Instructions système (Prompt de comportement)</Label>
+              <Label className="text-xs font-medium">Instructions système</Label>
               <Textarea
                 required
                 rows={3}
                 value={form.instructions}
                 onChange={(e) => setForm({ ...form, instructions: e.target.value })}
                 className="rounded-xl font-mono text-xs"
-                placeholder="Décrivez comment cet agent analyse les problèmes et propose des solutions..."
+                placeholder="Décrivez le comportement et les responsabilités de cet agent…"
               />
             </div>
 
-            {/* Compétences (Skills) */}
+            {/* Skills */}
             <div className="space-y-1.5">
-              <Label className="text-xs font-medium">Compétences clés (Tags séparés par virgules)</Label>
+              <Label className="text-xs font-medium">Compétences clés (séparées par virgules)</Label>
               <Input
                 value={form.skills}
                 onChange={(e) => setForm({ ...form, skills: e.target.value })}
@@ -535,7 +494,7 @@ function AgentsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
               />
             </div>
 
-            {/* Sélection Propre des Outils Autorisés */}
+            {/* Outils */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label className="text-xs font-medium">
@@ -547,29 +506,28 @@ function AgentsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
                     setForm({
                       ...form,
                       tools:
-                        form.tools.length === ALL_TOOLS.length
+                        form.tools.length === ALL_TOOL_IDS.length
                           ? ["project_context"]
-                          : ALL_TOOLS.map((t) => t.id),
+                          : [...ALL_TOOL_IDS],
                     })
                   }
                   className="font-mono text-[10px] text-primary hover:underline"
                 >
-                  {form.tools.length === ALL_TOOLS.length ? "Réduire" : "Tout sélectionner"}
+                  {form.tools.length === ALL_TOOL_IDS.length ? "Réduire" : "Tout sélectionner"}
                 </button>
               </div>
-
               <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 max-h-44 overflow-y-auto p-1 rounded-xl border border-border/50 bg-background/40">
-                {ALL_TOOLS.map((t) => {
-                  const on = form.tools.includes(t.id);
-                  const Icon = t.icon;
+                {ALL_TOOL_IDS.map((tId) => {
+                  const meta = TOOL_META[tId];
+                  const on = form.tools.includes(tId);
                   return (
                     <button
-                      key={t.id}
+                      key={tId}
                       type="button"
                       onClick={() =>
                         setForm({
                           ...form,
-                          tools: on ? form.tools.filter((x) => x !== t.id) : [...form.tools, t.id],
+                          tools: on ? form.tools.filter((x) => x !== tId) : [...form.tools, tId],
                         })
                       }
                       className={`flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-left font-mono text-[11px] transition-all ${
@@ -578,8 +536,8 @@ function AgentsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
                           : "border-border/60 bg-background/50 text-muted-foreground hover:border-border hover:text-foreground"
                       }`}
                     >
-                      <Icon className="size-3 shrink-0" />
-                      <span className="truncate">{t.label}</span>
+                      <Icon name={meta.iconName} className="size-3 shrink-0" />
+                      <span className="truncate">{meta.label}</span>
                     </button>
                   );
                 })}
@@ -590,28 +548,39 @@ function AgentsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
             <div className="space-y-1.5 rounded-xl border border-border/50 bg-background/30 p-3">
               <Label className="text-xs font-medium">Niveau d&apos;autorisation</Label>
               <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                <div className="flex items-center justify-between rounded-lg border border-border/40 p-2">
-                  <span>Analyse & Diagnostic</span>
-                  <Switch
-                    checked={form.permissions.analyze}
-                    onCheckedChange={(v) =>
-                      setForm({ ...form, permissions: { ...form.permissions, analyze: v } })
-                    }
-                  />
-                </div>
-                <div className="flex items-center justify-between rounded-lg border border-border/40 p-2">
-                  <span>Préparation correctifs</span>
-                  <Switch
-                    checked={form.permissions.prepare}
-                    onCheckedChange={(v) =>
-                      setForm({ ...form, permissions: { ...form.permissions, prepare: v } })
-                    }
-                  />
-                </div>
+                {[
+                  { key: "analyze", label: "Analyse & Diagnostic" },
+                  { key: "prepare", label: "Préparation de patch" },
+                  { key: "execute_with_approval", label: "Exécution (avec approbation)" },
+                ].map(({ key, label }) => (
+                  <div key={key} className="flex items-center justify-between rounded-lg border border-border/40 p-2">
+                    <span>{label}</span>
+                    <Switch
+                      checked={form.permissions[key as keyof typeof form.permissions]}
+                      onCheckedChange={(v) =>
+                        setForm({
+                          ...form,
+                          permissions: { ...form.permissions, [key]: v },
+                        })
+                      }
+                    />
+                  </div>
+                ))}
               </div>
             </div>
 
-            {/* Actions */}
+            {/* Actif */}
+            <div className="flex items-center justify-between rounded-xl border border-border/50 p-3">
+              <div>
+                <p className="text-xs font-medium">Agent actif</p>
+                <p className="text-[11px] text-muted-foreground">Vigilia Lead peut déléguer des tâches à cet agent.</p>
+              </div>
+              <Switch
+                checked={form.enabled}
+                onCheckedChange={(v) => setForm({ ...form, enabled: v })}
+              />
+            </div>
+
             <div className="flex justify-end gap-2 pt-2 border-t border-border/40">
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>
                 Annuler
@@ -622,15 +591,9 @@ function AgentsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
                 className="gap-2 bg-gradient-primary text-primary-foreground font-semibold shadow-glow"
               >
                 {busy ? (
-                  <>
-                    <RefreshCw className="size-4 animate-spin" />
-                    Enregistrement…
-                  </>
+                  <><RefreshCw className="size-4 animate-spin" /> Enregistrement…</>
                 ) : (
-                  <>
-                    <Bot className="size-4" />
-                    Enregistrer l&apos;agent
-                  </>
+                  form.id ? "Mettre à jour" : "Créer l'agent"
                 )}
               </Button>
             </div>

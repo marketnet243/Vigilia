@@ -108,9 +108,14 @@ const PROVIDER_CONFIG: Record<
 
 function detectProviderFromKey(key: string): ProviderType | null {
   const k = key.trim();
+  // Google Gemini / AI Studio : formats AIza... (legacy) et AQ.Ab... (nouveau OAuth2/AI Studio)
   if (k.startsWith("AIza")) return "gemini";
+  if (k.startsWith("AQ.")) return "gemini";
+  // Anthropic
   if (k.startsWith("sk-ant-")) return "anthropic";
+  // OpenRouter
   if (k.startsWith("sk-or-")) return "openrouter";
+  // OpenAI
   if (k.startsWith("sk-")) return "openai";
   return null;
 }
@@ -129,6 +134,7 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
   const [fallback, setFallback] = useState("gemini-2.5-pro");
   const [secret, setSecret] = useState("");
   const [detectedBadge, setDetectedBadge] = useState<string | null>(null);
+  const [keyReady, setKeyReady] = useState(false); // true once key ≥ 8 chars
   const [priority, setPriority] = useState(10);
   const [limit, setLimit] = useState(2000000);
   const [busy, setBusy] = useState(false);
@@ -147,6 +153,8 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
   // Détection automatique lors de la saisie / collage de la clé API
   function handleSecretChange(val: string) {
     setSecret(val);
+    const ready = val.trim().length >= 8;
+    setKeyReady(ready);
     const detected = detectProviderFromKey(val);
     if (detected) {
       const cfg = PROVIDER_CONFIG[detected];
@@ -156,6 +164,8 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
       setFallback(cfg.defaultFallback);
       setDetectedBadge(`Clé ${cfg.name} reconnue automatiquement ! Modèles pré-configurés.`);
       toast.success(`Clé ${cfg.name} détectée : modèles configurés.`);
+    } else if (ready) {
+      setDetectedBadge(null);
     } else {
       setDetectedBadge(null);
     }
@@ -168,6 +178,7 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
     setFallback(PROVIDER_CONFIG.gemini.defaultFallback);
     setSecret("");
     setDetectedBadge(null);
+    setKeyReady(false);
     setPriority(10);
     setLimit(2000000);
     setOpen(true);
@@ -426,10 +437,13 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
           </DialogHeader>
 
           <form onSubmit={handleAdd} className="space-y-4 pt-1">
-            {/* Champ Clé API avec auto-détection */}
+            {/* ── ÉTAPE 1 : Clé API ── */}
             <div className="space-y-1.5">
               <Label className="text-xs font-medium text-foreground">
-                Clé API <span className="text-primary font-normal">(Collez votre clé pour auto-détection)</span>
+                1. Clé API{" "}
+                <span className="text-primary font-normal">
+                  — collez votre clé pour charger les modèles
+                </span>
               </Label>
               <div className="relative">
                 <KeyRound className="pointer-events-none absolute left-3 top-3 size-4 text-muted-foreground" />
@@ -439,26 +453,35 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
                   value={secret}
                   onChange={(e) => handleSecretChange(e.target.value)}
                   className="rounded-xl border-border/80 bg-background/65 pl-10 font-mono text-xs placeholder:text-muted-foreground/50"
-                  placeholder="AIzaSy... (Gemini) ou sk-... (OpenAI / Claude)"
+                  placeholder="AIzaSy... (Gemini)  ·  sk-... (OpenAI / Claude)  ·  sk-or-... (OpenRouter)"
                   autoComplete="off"
+                  autoFocus
                 />
               </div>
               {detectedBadge ? (
-                <div className="flex items-center gap-1.5 rounded-lg border border-success/30 bg-success/10 px-2.5 py-1.5 font-mono text-[11px] text-success animate-rise">
+                <div className="flex items-center gap-1.5 rounded-lg border border-success/30 bg-success/10 px-2.5 py-1.5 font-mono text-[11px] text-success">
                   <CheckCircle2 className="size-3.5 shrink-0" />
                   {detectedBadge}
                 </div>
-              ) : (
+              ) : !keyReady ? (
                 <p className="text-[11px] text-muted-foreground">
-                  Chiffrée en AES-256-GCM côté serveur · Jamais renvoyée au navigateur.
+                  Les modèles disponibles s&apos;affichent dès que la clé est reconnue.
+                  Chiffrée AES-256-GCM côté serveur.
+                </p>
+              ) : (
+                <p className="text-[11px] text-warning">
+                  Préfixe non reconnu — sélectionnez le fournisseur manuellement ci-dessous.
                 </p>
               )}
             </div>
 
+            {/* ── ÉTAPE 2 : Config (visible seulement après clé) ── */}
+            {keyReady && (
+              <>
             {/* Sélection Fournisseur & Priorité */}
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label className="text-xs font-medium">Fournisseur</Label>
+                <Label className="text-xs font-medium">2. Fournisseur détecté</Label>
                 <Select
                   value={provider}
                   onValueChange={(v) => handleProviderChange(v as ProviderType)}
@@ -501,7 +524,7 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
               />
             </div>
 
-            {/* Modèle Principal (Liste dynamique intelligente) */}
+            {/* Modèle principal */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <Label className="text-xs font-medium">Modèle principal</Label>
@@ -541,9 +564,9 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
               </Select>
             </div>
 
-            {/* Limite mensuelle de jetons */}
+            {/* Limite mensuelle */}
             <div className="space-y-1.5">
-              <Label className="text-xs font-medium">Limite mensuelle de jetons (Sécurité budget)</Label>
+              <Label className="text-xs font-medium">Limite mensuelle de jetons</Label>
               <Input
                 type="number"
                 min={1000}
@@ -554,6 +577,8 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
                 className="rounded-xl font-mono text-xs"
               />
             </div>
+              </>
+            )}
 
             {/* Boutons d'action */}
             <div className="flex justify-end gap-2 pt-2 border-t border-border/40">
@@ -562,7 +587,7 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
               </Button>
               <Button
                 type="submit"
-                disabled={busy || !secret.trim()}
+                disabled={busy || !secret.trim() || !keyReady}
                 className="gap-2 bg-gradient-primary text-primary-foreground font-semibold shadow-glow"
               >
                 {busy ? (
@@ -573,7 +598,7 @@ function ProvidersView({ w, refresh }: { w: Workspace; refresh: () => void }) {
                 ) : (
                   <>
                     <ShieldCheck className="size-4" />
-                    Ajouter le fournisseur
+                    {keyReady ? "Ajouter le fournisseur" : "Collez d'abord votre clé…"}
                   </>
                 )}
               </Button>
