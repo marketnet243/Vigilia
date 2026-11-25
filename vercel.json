@@ -1,5 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "tanstack-start",
-  "buildCommand": "NITRO_PRESET=vercel vite build"
+  "buildCommand": "NITRO_PRESET=vercel vite build && bun run scripts/run-migration.ts"
 }

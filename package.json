@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
-    "build:vercel": "vite build",
+    "build:vercel": "NITRO_PRESET=vercel vite build && bun run scripts/run-migration.ts",
+    "vercel-build": "NITRO_PRESET=vercel vite build && bun run scripts/run-migration.ts",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "lint": "eslint .",

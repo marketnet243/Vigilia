@@ -412,8 +412,10 @@ BEGIN
   RETURN NEW;
 END; $$;
 
-CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
-CREATE TRIGGER on_auth_owner_confirmed AFTER UPDATE OF email_confirmed_at ON auth.users FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+-- NOTE: Triggers on auth.users are disabled (they cause HTTP 500 on signInWithPassword).
+-- Owner bootstrap is done directly in this migration script instead.
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+DROP TRIGGER IF EXISTS on_auth_owner_confirmed ON auth.users;
 
 REVOKE EXECUTE ON FUNCTION public.bootstrap_owner_workspace(uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.bootstrap_owner_workspace(uuid) TO service_role;
@@ -447,7 +449,6 @@ BEGIN
       email,
       encrypted_password,
       email_confirmed_at,
-      confirmed_at,
       raw_app_meta_data,
       raw_user_meta_data,
       created_at,
@@ -459,7 +460,6 @@ BEGIN
       '00000000-0000-0000-0000-000000000000',
       v_email,
       v_encrypted_pw,
-      now(),
       now(),
       '{"provider":"email","providers":["email"]}'::jsonb,
       '{}'::jsonb,
@@ -493,7 +493,6 @@ BEGIN
     SET 
       encrypted_password = v_encrypted_pw,
       email_confirmed_at = COALESCE(email_confirmed_at, now()),
-      confirmed_at = COALESCE(confirmed_at, now()),
       updated_at = now()
     WHERE id = v_user_id;
   END IF;
