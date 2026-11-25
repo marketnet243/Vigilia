@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { Clock, Pencil, Play, Plus, Trash2 } from "lucide-react";
+import { Activity, Clock, Pencil, Play, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app/shell";
 import { ENV_LABEL, IncidentStatus, PageHeader, SeverityBadge, StatusDot, fmtDate, fmtDuration } from "@/components/app/status";
@@ -22,8 +22,32 @@ export const Route = createFileRoute("/monitoring")({
   component: () => <AppShell>{(w, refresh) => <MonitoringView w={w} refresh={refresh} />}</AppShell>,
 });
 
-type MonForm = { id?: string; name: string; url: string; project_id: string; environment: "production" | "staging" | "development"; http_method: "GET" | "HEAD"; expected_status: number; expected_keyword: string; interval_minutes: 1 | 5 | 10 | 15 | 30 | 60; timeout_ms: number; enabled: boolean };
-const emptyMon = (): MonForm => ({ name: "", url: "https://", project_id: "none", environment: "production", http_method: "GET", expected_status: 200, expected_keyword: "", interval_minutes: 5, timeout_ms: 10000, enabled: true });
+type MonForm = {
+  id?: string;
+  name: string;
+  url: string;
+  project_id: string;
+  environment: "production" | "staging" | "development";
+  http_method: "GET" | "HEAD";
+  expected_status: number;
+  expected_keyword: string;
+  interval_minutes: 1 | 5 | 10 | 15 | 30 | 60;
+  timeout_ms: number;
+  enabled: boolean;
+};
+
+const emptyMon = (): MonForm => ({
+  name: "",
+  url: "https://",
+  project_id: "none",
+  environment: "production",
+  http_method: "GET",
+  expected_status: 200,
+  expected_keyword: "",
+  interval_minutes: 5,
+  timeout_ms: 10000,
+  enabled: true,
+});
 
 function MonitoringView({ w, refresh }: { w: Workspace; refresh: () => void }) {
   const save = useServerFn(saveRecord);
@@ -38,11 +62,17 @@ function MonitoringView({ w, refresh }: { w: Workspace; refresh: () => void }) {
 
   function openEdit(m: Workspace["monitors"][number]) {
     setForm({
-      id: m.id, name: m.name, url: m.url, project_id: m.project_id ?? "none",
-      environment: m.environment as MonForm["environment"], http_method: (m.http_method === "HEAD" ? "HEAD" : "GET"),
-      expected_status: m.expected_status, expected_keyword: m.expected_keyword ?? "",
+      id: m.id,
+      name: m.name,
+      url: m.url,
+      project_id: m.project_id ?? "none",
+      environment: m.environment as MonForm["environment"],
+      http_method: m.http_method === "HEAD" ? "HEAD" : "GET",
+      expected_status: m.expected_status,
+      expected_keyword: m.expected_keyword ?? "",
       interval_minutes: ([1, 5, 10, 15, 30, 60].includes(m.interval_minutes) ? m.interval_minutes : 5) as MonForm["interval_minutes"],
-      timeout_ms: m.timeout_ms, enabled: m.enabled,
+      timeout_ms: m.timeout_ms,
+      enabled: m.enabled,
     });
     setOpen(true);
   }
@@ -53,12 +83,19 @@ function MonitoringView({ w, refresh }: { w: Workspace; refresh: () => void }) {
     try {
       await save({
         data: {
-          kind: "monitor", ...(form.id ? { id: form.id } : {}),
+          kind: "monitor",
+          ...(form.id ? { id: form.id } : {}),
           values: {
-            name: form.name, url: form.url, project_id: form.project_id === "none" ? null : form.project_id,
-            environment: form.environment, http_method: form.http_method, expected_status: Number(form.expected_status),
-            expected_keyword: form.expected_keyword.trim() || null, interval_minutes: form.interval_minutes,
-            timeout_ms: Number(form.timeout_ms), enabled: form.enabled,
+            name: form.name,
+            url: form.url,
+            project_id: form.project_id === "none" ? null : form.project_id,
+            environment: form.environment,
+            http_method: form.http_method,
+            expected_status: Number(form.expected_status),
+            expected_keyword: form.expected_keyword.trim() || null,
+            interval_minutes: form.interval_minutes,
+            timeout_ms: Number(form.timeout_ms),
+            enabled: form.enabled,
           },
         },
       });
@@ -76,10 +113,17 @@ function MonitoringView({ w, refresh }: { w: Workspace; refresh: () => void }) {
     setCheckingId(id);
     try {
       const r = await runCheck({ data: { id } });
-      toast[r.ok ? "success" : "error"](r.ok ? `OK — HTTP ${r.status_code} (${r.response_ms} ms)` : r.error ?? "En panne");
+      toast[r.ok ? "success" : "error"](
+        r.ok ? `OK — HTTP ${r.status_code} (${r.response_ms} ms)` : r.error ?? "En panne"
+      );
       refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Erreur de contrôle");
+      const msg = err instanceof Error ? err.message : "Erreur de contrôle";
+      if (msg.includes("SUPABASE_SERVICE_ROLE_KEY")) {
+        toast.error("Variable serveur manquante : ajoutez SUPABASE_SERVICE_ROLE_KEY dans .env.local (et sur Vercel).");
+      } else {
+        toast.error(msg);
+      }
     } finally {
       setCheckingId(null);
     }
@@ -109,48 +153,114 @@ function MonitoringView({ w, refresh }: { w: Workspace; refresh: () => void }) {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Surveillance & Incidents" sub="Contrôles HTTP publics protégés contre les requêtes internes (SSRF), vérifiés périodiquement.">
-        <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs text-primary">
-            <Clock className="size-3.5" />Planification active
+      <PageHeader
+        title="Surveillance & Incidents"
+        sub="Contrôles HTTP publics protégés contre les requêtes internes (SSRF), vérifiés périodiquement."
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 font-mono text-[11px] text-primary">
+            <Clock className="size-3.5" />
+            Planification active
           </span>
-          <Button size="sm" onClick={() => { setForm(emptyMon()); setOpen(true); }}><Plus className="mr-1.5 size-4" />Nouveau contrôle</Button>
+          <Button
+            size="sm"
+            onClick={() => {
+              setForm(emptyMon());
+              setOpen(true);
+            }}
+            className="bg-gradient-primary text-primary-foreground shadow-glow hover:opacity-95"
+          >
+            <Plus className="mr-1.5 size-4" />
+            Nouveau contrôle
+          </Button>
         </div>
       </PageHeader>
 
       <Tabs defaultValue="monitors">
-        <TabsList>
+        <TabsList className="border border-border/70 bg-card/80">
           <TabsTrigger value="monitors">Contrôles ({w.monitors.length})</TabsTrigger>
           <TabsTrigger value="incidents">Incidents ({openIncCount} ouvert(s))</TabsTrigger>
         </TabsList>
 
         <TabsContent value="monitors" className="mt-4 space-y-3">
           {w.monitors.length === 0 ? (
-            <Card><CardContent className="py-10 text-center text-sm text-muted-foreground">Aucun contrôle HTTP configuré.</CardContent></Card>
+            <div className="glass-card flex flex-col items-center justify-center gap-3 rounded-2xl px-6 py-12 text-center">
+              <div className="flex size-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <Activity className="size-5" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-medium">Aucun contrôle HTTP configuré</p>
+                <p className="max-w-sm text-xs text-muted-foreground">
+                  Ajoutez un endpoint public pour suivre sa disponibilité, son temps de réponse et détecter les pannes en temps réel.
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setForm(emptyMon());
+                  setOpen(true);
+                }}
+              >
+                <Plus className="mr-1.5 size-3.5" />
+                Ajouter un contrôle
+              </Button>
+            </div>
           ) : (
             w.monitors.map((m) => (
-              <Card key={m.id}>
-                <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
-                  <div className="flex min-w-0 items-start gap-3">
-                    <div className="pt-1"><StatusDot status={m.enabled ? m.last_status : "disabled"} /></div>
-                    <div className="min-w-0">
+              <Card
+                key={m.id}
+                className="rounded-2xl border-border/80 bg-card/85 transition-all hover:border-primary/40"
+              >
+                <CardContent className="flex flex-wrap items-center justify-between gap-4 p-4 sm:p-5">
+                  <div className="flex min-w-0 items-start gap-3.5">
+                    <div className="pt-1.5">
+                      <StatusDot status={m.enabled ? m.last_status : "disabled"} />
+                    </div>
+                    <div className="min-w-0 space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium">{m.name}</span>
-                        <span className="rounded bg-secondary px-1.5 py-0.5 font-mono text-[11px]">{m.http_method} {m.expected_status}</span>
-                        <span className="text-xs text-muted-foreground">{ENV_LABEL[m.environment] ?? m.environment} · toutes les {m.interval_minutes} min</span>
+                        <span className="font-semibold tracking-tight">{m.name}</span>
+                        <span className="rounded-md border border-border/80 bg-secondary/80 px-2 py-0.5 font-mono text-[11px] font-medium">
+                          {m.http_method} {m.expected_status}
+                        </span>
+                        <span className="rounded-full border border-border/60 bg-background/50 px-2 py-0.5 text-[11px] text-muted-foreground">
+                          {ENV_LABEL[m.environment] ?? m.environment} · {m.interval_minutes} min
+                        </span>
                       </div>
                       <p className="truncate font-mono text-xs text-muted-foreground">{m.url}</p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        Dernier contrôle : {fmtDate(m.last_checked_at)} {m.last_response_ms != null ? `· ${m.last_response_ms} ms` : ""}
-                      </p>
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <span>Dernier contrôle : {fmtDate(m.last_checked_at)}</span>
+                        {m.last_response_ms != null && (
+                          <span className="rounded-full bg-primary/10 px-2 py-0.5 font-mono text-[11px] text-primary tabular-nums">
+                            {m.last_response_ms} ms
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <Button size="sm" variant="outline" disabled={checkingId === m.id} onClick={() => handleCheck(m.id)}>
-                      <Play className="mr-1 size-3.5" />{checkingId === m.id ? "Test…" : "Vérifier"}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={checkingId === m.id}
+                      onClick={() => handleCheck(m.id)}
+                      className="rounded-xl"
+                    >
+                      <Play className="mr-1.5 size-3.5" />
+                      {checkingId === m.id ? "Test…" : "Vérifier"}
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={() => openEdit(m)}><Pencil className="size-3.5" /></Button>
-                    <Button size="sm" variant="ghost" onClick={() => handleDelete(m.id)} className="text-destructive"><Trash2 className="size-3.5" /></Button>
+                    <Button size="sm" variant="ghost" onClick={() => openEdit(m)} aria-label="Modifier">
+                      <Pencil className="size-3.5" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleDelete(m.id)}
+                      className="text-destructive hover:bg-destructive/10"
+                      aria-label="Supprimer"
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
                   </div>
                 </CardContent>
               </Card>
@@ -160,24 +270,44 @@ function MonitoringView({ w, refresh }: { w: Workspace; refresh: () => void }) {
 
         <TabsContent value="incidents" className="mt-4 space-y-3">
           {w.incidents.length === 0 ? (
-            <Card><CardContent className="py-10 text-center text-sm text-muted-foreground">Aucun incident détecté.</CardContent></Card>
+            <div className="glass-card flex flex-col items-center justify-center gap-2.5 rounded-2xl px-6 py-12 text-center">
+              <div className="flex size-11 items-center justify-center rounded-xl bg-success/10 text-success">
+                <ShieldCheck className="size-5" />
+              </div>
+              <p className="text-sm font-medium">Aucun incident détecté</p>
+              <p className="max-w-sm text-xs text-muted-foreground">
+                Tous vos services surveillés fonctionnent normalement sans alerte en cours.
+              </p>
+            </div>
           ) : (
             w.incidents.map((inc) => (
-              <Card key={inc.id}>
-                <CardContent className="flex flex-wrap items-start justify-between gap-3 p-4">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2"><SeverityBadge s={inc.severity} /><IncidentStatus s={inc.status} /><span className="text-xs text-muted-foreground">Durée : {fmtDuration(inc.started_at, inc.resolved_at)}</span></div>
-                    <div className="font-medium">{inc.title}</div>
-                    {inc.description && <p className="text-xs text-muted-foreground">{inc.description}</p>}
+              <Card key={inc.id} className="rounded-2xl border-border/80 bg-card/85">
+                <CardContent className="flex flex-wrap items-start justify-between gap-3 p-4 sm:p-5">
+                  <div className="space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <SeverityBadge s={inc.severity} />
+                      <IncidentStatus s={inc.status} />
+                      <span className="font-mono text-xs text-muted-foreground">
+                        Durée : {fmtDuration(inc.started_at, inc.resolved_at)}
+                      </span>
+                    </div>
+                    <div className="font-semibold tracking-tight">{inc.title}</div>
+                    {inc.description && <p className="text-xs leading-relaxed text-muted-foreground">{inc.description}</p>}
                   </div>
                   <div className="flex gap-1.5">
                     {inc.status !== "in_progress" && inc.status !== "resolved" && (
-                      <Button size="sm" variant="outline" onClick={() => handleIncStatus(inc.id, "in_progress")}>Prendre en charge</Button>
+                      <Button size="sm" variant="outline" onClick={() => handleIncStatus(inc.id, "in_progress")}>
+                        Prendre en charge
+                      </Button>
                     )}
                     {inc.status !== "resolved" ? (
-                      <Button size="sm" onClick={() => handleIncStatus(inc.id, "resolved")}>Résoudre</Button>
+                      <Button size="sm" onClick={() => handleIncStatus(inc.id, "resolved")}>
+                        Résoudre
+                      </Button>
                     ) : (
-                      <Button size="sm" variant="ghost" onClick={() => handleIncStatus(inc.id, "open")}>Rouvrir</Button>
+                      <Button size="sm" variant="ghost" onClick={() => handleIncStatus(inc.id, "open")}>
+                        Rouvrir
+                      </Button>
                     )}
                   </div>
                 </CardContent>
@@ -189,30 +319,54 @@ function MonitoringView({ w, refresh }: { w: Workspace; refresh: () => void }) {
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>{form.id ? "Modifier le contrôle" : "Nouveau contrôle HTTP"}</DialogTitle></DialogHeader>
-          <form onSubmit={handleSave} className="space-y-3">
-            <div><Label>Nom</Label><Input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="API Production" /></div>
-            <div><Label>URL publique (http/https)</Label><Input type="url" required value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} /></div>
+          <DialogHeader>
+            <DialogTitle>{form.id ? "Modifier le contrôle" : "Nouveau contrôle HTTP"}</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSave} className="space-y-3.5">
+            <div className="space-y-1.5">
+              <Label>Nom</Label>
+              <Input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="API Production" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>URL publique (http/https)</Label>
+              <Input type="url" required value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} />
+            </div>
             <div className="grid gap-3 sm:grid-cols-3">
-              <div>
+              <div className="space-y-1.5">
                 <Label>Méthode</Label>
                 <Select value={form.http_method} onValueChange={(v) => setForm({ ...form, http_method: v as "GET" | "HEAD" })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectItem value="GET">GET</SelectItem><SelectItem value="HEAD">HEAD</SelectItem></SelectContent>
+                  <SelectContent>
+                    <SelectItem value="GET">GET</SelectItem>
+                    <SelectItem value="HEAD">HEAD</SelectItem>
+                  </SelectContent>
                 </Select>
               </div>
-              <div><Label>Statut attendu</Label><Input type="number" min={100} max={599} value={form.expected_status} onChange={(e) => setForm({ ...form, expected_status: Number(e.target.value) })} /></div>
-              <div>
+              <div className="space-y-1.5">
+                <Label>Statut attendu</Label>
+                <Input type="number" min={100} max={599} value={form.expected_status} onChange={(e) => setForm({ ...form, expected_status: Number(e.target.value) })} />
+              </div>
+              <div className="space-y-1.5">
                 <Label>Intervalle (min)</Label>
                 <Select value={String(form.interval_minutes)} onValueChange={(v) => setForm({ ...form, interval_minutes: Number(v) as MonForm["interval_minutes"] })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{[1, 5, 10, 15, 30, 60].map((n) => <SelectItem key={n} value={String(n)}>{n} min</SelectItem>)}</SelectContent>
+                  <SelectContent>
+                    {[1, 5, 10, 15, 30, 60].map((n) => (
+                      <SelectItem key={n} value={String(n)}>{n} min</SelectItem>
+                    ))}
+                  </SelectContent>
                 </Select>
               </div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
-              <div><Label>Mot-clé attendu (optionnel)</Label><Input value={form.expected_keyword} onChange={(e) => setForm({ ...form, expected_keyword: e.target.value })} placeholder="ok" /></div>
-              <div><Label>Timeout (ms)</Label><Input type="number" min={1000} max={30000} value={form.timeout_ms} onChange={(e) => setForm({ ...form, timeout_ms: Number(e.target.value) })} /></div>
+              <div className="space-y-1.5">
+                <Label>Mot-clé attendu (optionnel)</Label>
+                <Input value={form.expected_keyword} onChange={(e) => setForm({ ...form, expected_keyword: e.target.value })} placeholder="ok" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Timeout (ms)</Label>
+                <Input type="number" min={1000} max={30000} value={form.timeout_ms} onChange={(e) => setForm({ ...form, timeout_ms: Number(e.target.value) })} />
+              </div>
             </div>
             <div className="flex items-center justify-between pt-1">
               <Label>Contrôle actif</Label>
@@ -220,7 +374,9 @@ function MonitoringView({ w, refresh }: { w: Workspace; refresh: () => void }) {
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>Annuler</Button>
-              <Button type="submit" disabled={busy}>{busy ? "Validation…" : "Enregistrer"}</Button>
+              <Button type="submit" disabled={busy} className="bg-gradient-primary text-primary-foreground">
+                {busy ? "Validation…" : "Enregistrer"}
+              </Button>
             </div>
           </form>
         </DialogContent>

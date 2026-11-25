@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { Check, GitBranch, Play, Plus, ShieldCheck, X, Ban } from "lucide-react";
+import { Ban, Check, GitBranch, Play, Plus, Rocket, ShieldCheck, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app/shell";
 import { Md } from "@/components/app/md";
@@ -115,31 +115,61 @@ function MissionsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
   return (
     <div className="space-y-6">
       <PageHeader title="Missions & Approbations" sub="Chaque opération sensible (écriture GitHub, prod, migration) exige votre validation explicite.">
-        <Button size="sm" onClick={() => setOpen(true)}><Plus className="mr-1.5 size-4" />Nouvelle mission</Button>
+        <Button size="sm" onClick={() => setOpen(true)} className="bg-gradient-primary text-primary-foreground shadow-glow hover:opacity-95">
+          <Plus className="mr-1.5 size-4" />
+          Nouvelle mission
+        </Button>
       </PageHeader>
 
       <Tabs defaultValue={pendingCount > 0 ? "approvals" : "missions"}>
-        <TabsList>
+        <TabsList className="bg-card/80 border border-border/70">
           <TabsTrigger value="missions">Missions ({w.missions.length})</TabsTrigger>
-          <TabsTrigger value="approvals">Approbations ({pendingCount} en attente)</TabsTrigger>
+          <TabsTrigger value="approvals">
+            Approbations ({pendingCount} en attente)
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="missions" className="mt-4">
           <div className="grid gap-4 lg:grid-cols-12">
-            <div className="space-y-2 lg:col-span-5">
+            <div className="space-y-2.5 lg:col-span-5">
               {w.missions.length === 0 ? (
-                <Card><CardContent className="py-8 text-center text-sm text-muted-foreground">Aucune mission pour le moment.</CardContent></Card>
+                <div className="glass-card flex flex-col items-center justify-center gap-3 rounded-2xl px-6 py-10 text-center">
+                  <div className="flex size-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    <Rocket className="size-5" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium">Aucune mission pour le moment</p>
+                    <p className="text-xs text-muted-foreground">
+                      Orchestrez vos agents IA pour diagnostiquer un incident, auditer un dépôt ou planifier une correction.
+                    </p>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+                    <Plus className="mr-1.5 size-3.5" />
+                    Créer une mission
+                  </Button>
+                </div>
               ) : (
                 w.missions.map((m) => (
-                  <button key={m.id} type="button" onClick={() => setSelectedId(m.id)}
-                    className={`w-full rounded-lg border p-3.5 text-left transition-colors ${selected?.id === m.id ? "border-primary bg-card" : "border-border bg-card/50 hover:border-border/80"}`}>
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setSelectedId(m.id)}
+                    className={`w-full rounded-xl border p-4 text-left transition-all ${
+                      selected?.id === m.id
+                        ? "border-primary/60 bg-card shadow-glow"
+                        : "border-border/80 bg-card/60 hover:border-primary/30 hover:bg-card"
+                    }`}
+                  >
                     <div className="flex items-start justify-between gap-2">
-                      <span className="line-clamp-2 text-sm font-medium">{m.title}</span>
+                      <span className="line-clamp-2 text-sm font-semibold tracking-tight">{m.title}</span>
                       <MissionStatusBadge status={m.status} />
+                    </div>
+                    <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-secondary">
+                      <div className="h-full rounded-full bg-gradient-primary transition-all" style={{ width: `${m.progress}%` }} />
                     </div>
                     <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
                       <span>{fmtDate(m.created_at)}</span>
-                      <span className="font-mono">{m.progress}% · {m.tokens_used} tok.</span>
+                      <span className="font-mono tabular-nums">{m.progress}% · {m.tokens_used} tok.</span>
                     </div>
                   </button>
                 ))
@@ -148,49 +178,71 @@ function MissionsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
 
             <div className="lg:col-span-7">
               {selected ? (
-                <Card>
-                  <CardHeader className="pb-3">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div>
-                        <CardTitle className="text-base">{selected.title}</CardTitle>
-                        <p className="mt-1 text-xs text-muted-foreground">{selected.description}</p>
+                <Card className="rounded-2xl border-border/80 bg-card/85 backdrop-blur-sm">
+                  <CardHeader className="border-b border-border/60 pb-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <CardTitle className="text-base font-semibold">{selected.title}</CardTitle>
+                          <MissionStatusBadge status={selected.status} />
+                        </div>
+                        <p className="text-xs leading-relaxed text-muted-foreground">{selected.description}</p>
                       </div>
                       <div className="flex gap-1.5">
                         {(selected.status === "pending" || selected.status === "failed") && (
                           <Button size="sm" disabled={runningId === selected.id} onClick={() => handleRun(selected.id)}>
-                            <Play className="mr-1 size-3.5" />{runningId === selected.id ? "Exécution…" : "Exécuter"}
+                            <Play className="mr-1 size-3.5" />
+                            {runningId === selected.id ? "Exécution…" : "Exécuter"}
                           </Button>
                         )}
                         {["pending", "planning", "investigating", "in_progress", "validating"].includes(selected.status) && (
-                          <Button size="sm" variant="outline" onClick={() => handleCancel(selected.id)}><Ban className="mr-1 size-3.5" />Annuler</Button>
+                          <Button size="sm" variant="outline" onClick={() => handleCancel(selected.id)}>
+                            <Ban className="mr-1 size-3.5" />
+                            Annuler
+                          </Button>
                         )}
                       </div>
                     </div>
                   </CardHeader>
-                  <CardContent className="space-y-4">
+                  <CardContent className="space-y-4 pt-4">
                     {selectedSteps.length > 0 && (
-                      <div className="space-y-2">
-                        <h4 className="text-xs font-semibold uppercase text-muted-foreground">Étapes d'exécution</h4>
+                      <div className="space-y-2.5">
+                        <h4 className="font-mono text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                          Étapes d&apos;exécution ({selectedSteps.length})
+                        </h4>
                         {selectedSteps.map((st) => (
-                          <div key={st.id} className="rounded-md border border-border bg-secondary/30 p-3 text-xs">
-                            <div className="flex items-center justify-between font-medium">
-                              <span>{st.step_order}. {st.agent_name} — {st.title}</span>
-                              <span className="font-mono text-muted-foreground">{st.status}</span>
+                          <div key={st.id} className="rounded-xl border border-border/70 bg-background/50 p-3.5 text-xs">
+                            <div className="flex items-center justify-between gap-2 font-medium">
+                              <span className="flex items-center gap-2">
+                                <span className="flex size-5 items-center justify-center rounded-md bg-primary/15 font-mono text-[11px] text-primary">
+                                  {st.step_order}
+                                </span>
+                                <span>{st.agent_name} — {st.title}</span>
+                              </span>
+                              <span className="rounded-full border border-border px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
+                                {st.status}
+                              </span>
                             </div>
-                            {st.output_summary && <p className="mt-1.5 line-clamp-4 text-muted-foreground">{st.output_summary}</p>}
+                            {st.output_summary && <p className="mt-2 line-clamp-4 leading-relaxed text-muted-foreground">{st.output_summary}</p>}
                           </div>
                         ))}
                       </div>
                     )}
                     {selected.final_report && (
-                      <div className="rounded-lg border border-border bg-background/60 p-4">
+                      <div className="rounded-xl border border-border/80 bg-background/65 p-4">
                         <Md text={selected.final_report} />
                       </div>
                     )}
                   </CardContent>
                 </Card>
               ) : (
-                <Card><CardContent className="py-12 text-center text-sm text-muted-foreground">Sélectionnez une mission pour consulter son rapport.</CardContent></Card>
+                <div className="glass-card flex min-h-[240px] flex-col items-center justify-center gap-2 rounded-2xl px-6 py-12 text-center">
+                  <ShieldCheck className="size-8 text-muted-foreground/60" />
+                  <p className="text-sm font-medium text-foreground/85">Rapport de mission</p>
+                  <p className="max-w-xs text-xs text-muted-foreground">
+                    Sélectionnez une mission dans la liste pour consulter ses étapes d&apos;agents et son rapport détaillé.
+                  </p>
+                </div>
               )}
             </div>
           </div>
@@ -198,28 +250,36 @@ function MissionsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
 
         <TabsContent value="approvals" className="mt-4 space-y-3">
           {w.approvals.length === 0 ? (
-            <Card><CardContent className="py-10 text-center text-sm text-muted-foreground">Aucune demande d'approbation enregistrée.</CardContent></Card>
+            <div className="glass-card flex flex-col items-center justify-center gap-2.5 rounded-2xl px-6 py-12 text-center">
+              <div className="flex size-11 items-center justify-center rounded-xl bg-success/10 text-success">
+                <ShieldCheck className="size-5" />
+              </div>
+              <p className="text-sm font-medium">Aucune demande d&apos;approbation</p>
+              <p className="max-w-sm text-xs text-muted-foreground">
+                Les actions sensibles proposées par vos agents apparaîtront ici pour validation explicite.
+              </p>
+            </div>
           ) : (
             w.approvals.map((ap) => {
               const br = branchInput[ap.id] ?? { base: "main", next: `vigilia/fix-${ap.id.slice(0, 6)}` };
               return (
-                <Card key={ap.id}>
-                  <CardContent className="space-y-3 p-4 text-sm">
+                <Card key={ap.id} className="rounded-2xl border-border/80 bg-card/85">
+                  <CardContent className="space-y-3 p-4 text-sm sm:p-5">
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <ShieldCheck className="size-4 text-primary" />
                           <span className="font-semibold">{ap.title}</span>
                           <SeverityBadge s={ap.risk_level} />
                         </div>
                         <p className="mt-1 text-xs text-muted-foreground">{ap.operation} · Expire : {fmtDate(ap.expires_at)}</p>
                       </div>
-                      <span className="rounded border border-border px-2 py-0.5 font-mono text-xs">{ap.status}</span>
+                      <span className="rounded-full border border-border/80 bg-muted/40 px-2.5 py-0.5 font-mono text-xs">{ap.status}</span>
                     </div>
-                    <div className="grid gap-2 rounded bg-secondary/30 p-3 text-xs sm:grid-cols-2">
-                      <div><strong>Risque :</strong> {ap.risk_summary}</div>
-                      <div><strong>Résultat attendu :</strong> {ap.expected_result}</div>
-                      {ap.target_repo && <div className="font-mono"><strong>Dépôt :</strong> {ap.target_repo}</div>}
+                    <div className="grid gap-2.5 rounded-xl border border-border/60 bg-background/50 p-3.5 text-xs sm:grid-cols-2">
+                      <div><strong className="text-foreground">Risque :</strong> <span className="text-muted-foreground">{ap.risk_summary}</span></div>
+                      <div><strong className="text-foreground">Résultat attendu :</strong> <span className="text-muted-foreground">{ap.expected_result}</span></div>
+                      {ap.target_repo && <div className="font-mono sm:col-span-2"><strong>Dépôt :</strong> {ap.target_repo}</div>}
                     </div>
                     {ap.status === "pending" && (
                       <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -229,7 +289,7 @@ function MissionsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
                       </div>
                     )}
                     {ap.status === "approved" && ap.action_type === "github_write" && ap.target_repo && (
-                      <div className="flex flex-wrap items-end gap-2 rounded border border-primary/30 bg-primary/5 p-3">
+                      <div className="flex flex-wrap items-end gap-2 rounded-xl border border-primary/30 bg-primary/5 p-3">
                         <div><Label className="text-xs">Branche base</Label><Input value={br.base} onChange={(e) => setBranchInput({ ...branchInput, [ap.id]: { ...br, base: e.target.value } })} className="h-8 w-32 font-mono text-xs" /></div>
                         <div><Label className="text-xs">Nouvelle branche</Label><Input value={br.next} onChange={(e) => setBranchInput({ ...branchInput, [ap.id]: { ...br, next: e.target.value } })} className="h-8 w-52 font-mono text-xs" /></div>
                         <Button size="sm" onClick={() => handleExecBranch(ap.id)}><GitBranch className="mr-1 size-3.5" />Créer la branche</Button>
@@ -247,10 +307,10 @@ function MissionsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
         <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>Lancer une nouvelle mission IA</DialogTitle></DialogHeader>
           <form onSubmit={handleCreate} className="space-y-3.5">
-            <div><Label>Titre</Label><Input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex : Auditer les performances API" /></div>
-            <div><Label>Objectif détaillé</Label><Textarea required rows={4} value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Décrivez le symptôme ou l'analyse souhaitée…" /></div>
+            <div className="space-y-1.5"><Label>Titre</Label><Input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex : Auditer les performances API" /></div>
+            <div className="space-y-1.5"><Label>Objectif détaillé</Label><Textarea required rows={4} value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Décrivez le symptôme ou l'analyse souhaitée…" /></div>
             <div className="grid gap-3 sm:grid-cols-2">
-              <div>
+              <div className="space-y-1.5">
                 <Label>Projet associé</Label>
                 <Select value={projectId} onValueChange={setProjectId}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -260,7 +320,7 @@ function MissionsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
                   </SelectContent>
                 </Select>
               </div>
-              <div>
+              <div className="space-y-1.5">
                 <Label>Priorité</Label>
                 <Select value={priority} onValueChange={(v) => setPriority(v as typeof priority)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -275,7 +335,7 @@ function MissionsView({ w, refresh }: { w: Workspace; refresh: () => void }) {
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>Annuler</Button>
-              <Button type="submit">Créer et exécuter</Button>
+              <Button type="submit" className="bg-gradient-primary text-primary-foreground">Créer et exécuter</Button>
             </div>
           </form>
         </DialogContent>
