@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Shield, Lock, Mail, ArrowRight, Eye, EyeOff, KeyRound, AlertCircle } from "lucide-react";
+import { Shield, Lock, Mail, ArrowRight, Eye, EyeOff, KeyRound, AlertCircle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { pageHead } from "@/lib/workspace/head";
@@ -16,8 +16,8 @@ export const Route = createFileRoute("/login")({
 
 function LoginPage() {
   const navigate = useNavigate();
-  const [email, setEmail] = useState("kayoyolandry@gmail.com");
-  const [password, setPassword] = useState("Landry@2025");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -31,7 +31,8 @@ function LoginPage() {
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setErrorMessage(null);
-    const cleanEmail = email.trim();
+
+    const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail) {
       toast.error("Veuillez saisir votre adresse e-mail.");
       return;
@@ -43,23 +44,35 @@ function LoginPage() {
 
     setBusy(true);
     try {
+      // Nettoyer toute session précédente corrompue avant de se connecter
+      await supabase.auth.signOut({ scope: "local" }).catch(() => {});
+
       const { data, error } = await supabase.auth.signInWithPassword({
         email: cleanEmail,
         password,
       });
 
       if (error) {
-        if (
-          error.message.toLowerCase().includes("email not confirmed") ||
-          (error as { code?: string }).code === "email_not_confirmed"
-        ) {
-          const msg =
-            "L'adresse e-mail n'a pas encore été confirmée dans Supabase. Veuillez désactiver 'Confirm email' dans Supabase (Authentication > Providers > Email) ou exécuter le script SQL d'activation.";
-          setErrorMessage(msg);
-          toast.error("E-mail non confirmé sur Supabase.");
+        const code = (error as { code?: string }).code ?? "";
+        const msg = error.message.toLowerCase();
+
+        if (msg.includes("email not confirmed") || code === "email_not_confirmed") {
+          setErrorMessage(
+            "L'adresse e-mail n'a pas été confirmée. Contactez l'administrateur pour activer le compte."
+          );
+          toast.error("E-mail non confirmé.");
           return;
         }
-        throw error;
+
+        if (msg.includes("invalid login credentials") || msg.includes("invalid credentials") || code === "invalid_credentials") {
+          setErrorMessage("Identifiants incorrects. Vérifiez votre adresse e-mail et votre mot de passe.");
+          toast.error("Identifiants incorrects.");
+          return;
+        }
+
+        setErrorMessage(error.message);
+        toast.error("Erreur de connexion.");
+        return;
       }
 
       if (data.session) {
@@ -67,7 +80,7 @@ function LoginPage() {
         void navigate({ to: "/" });
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Erreur de connexion";
+      const msg = err instanceof Error ? err.message : "Erreur de connexion inattendue";
       setErrorMessage(msg);
       toast.error(msg);
     } finally {
@@ -111,7 +124,7 @@ function LoginPage() {
               Connexion sécurisée
             </CardTitle>
             <CardDescription className="text-xs">
-              Veuillez valider vos identifiants pour accéder à la console de commande.
+              Saisissez vos identifiants pour accéder à la console de commande.
             </CardDescription>
           </CardHeader>
 
@@ -120,7 +133,7 @@ function LoginPage() {
               <div className="flex items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-foreground">
                 <AlertCircle className="mt-0.5 size-4 shrink-0 text-destructive" />
                 <div className="space-y-1 leading-relaxed">
-                  <span className="font-semibold text-destructive">Problème d'authentification :</span>
+                  <span className="font-semibold text-destructive">Erreur :</span>
                   <p>{errorMessage}</p>
                 </div>
               </div>
@@ -140,8 +153,9 @@ function LoginPage() {
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="kayoyolandry@gmail.com"
+                    placeholder="votre@email.com"
                     className="h-10 pl-9 font-mono text-sm"
+                    disabled={busy}
                   />
                 </div>
               </div>
@@ -161,12 +175,14 @@ function LoginPage() {
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••••••"
                     className="h-10 pl-9 pr-10 font-mono text-sm"
+                    disabled={busy}
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
                     className="absolute right-3 top-2.5 text-muted-foreground transition-colors hover:text-foreground"
                     aria-label="Afficher ou masquer le mot de passe"
+                    tabIndex={-1}
                   >
                     {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                   </button>
@@ -180,7 +196,7 @@ function LoginPage() {
               >
                 {busy ? (
                   <span className="flex items-center gap-2">
-                    <span className="size-4 animate-spin rounded-full border-2 border-background border-t-transparent" />
+                    <RefreshCw className="size-4 animate-spin" />
                     Connexion en cours…
                   </span>
                 ) : (
