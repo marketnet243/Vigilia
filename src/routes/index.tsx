@@ -65,17 +65,25 @@ function DashboardView({ w, refresh }: { w: Workspace; refresh: () => void }) {
         </div>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-5">
         {stats.map((s) => (
           <Link key={s.label} to={s.to} className="group block">
-            <Card className="h-full transition-colors group-hover:border-primary/50">
+            <Card className="relative h-full overflow-hidden border-border/80 bg-card/85 backdrop-blur-sm transition-all duration-200 group-hover:-translate-y-0.5 group-hover:border-primary/50 group-hover:shadow-glow">
               <CardContent className="p-4">
-                <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span>{s.label}</span>
-                  <s.icon className={s.alert ? "size-4 text-destructive" : "size-4 text-primary"} />
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-muted-foreground">{s.label}</span>
+                  <span
+                    className={
+                      s.alert
+                        ? "flex size-8 items-center justify-center rounded-lg border border-destructive/30 bg-destructive/10 text-destructive"
+                        : "flex size-8 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary transition-colors group-hover:bg-primary/15"
+                    }
+                  >
+                    <s.icon className="size-4" />
+                  </span>
                 </div>
-                <div className="mt-2 font-mono text-2xl font-semibold">{s.value}</div>
-                <div className="mt-0.5 text-xs text-muted-foreground">{s.sub}</div>
+                <div className="mt-3 font-mono text-2xl font-bold tracking-tight tabular-nums">{s.value}</div>
+                <div className="mt-1 text-xs text-muted-foreground">{s.sub}</div>
               </CardContent>
             </Card>
           </Link>

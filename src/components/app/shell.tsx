@@ -78,7 +78,7 @@ export function AppShell({ children }: { children: (w: Workspace, refetch: () =>
   if (ws.isError) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background bg-signal px-4">
-        <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 text-center space-y-4">
+        <div className="glass-card w-full max-w-md space-y-4 rounded-2xl p-6 text-center">
           <div className="mx-auto flex size-11 items-center justify-center rounded-full bg-destructive/15 text-destructive">
             <AlertTriangle className="size-5" />
           </div>
@@ -170,7 +170,7 @@ export function AppShell({ children }: { children: (w: Workspace, refetch: () =>
   );
 
   return (
-    <div className="flex min-h-screen bg-background text-foreground">
+    <div className="flex min-h-screen bg-background bg-signal text-foreground">
       <aside className="sticky top-0 hidden h-screen w-64 shrink-0 border-r border-sidebar-border lg:block">{navBody}</aside>
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-border bg-background/90 px-4 backdrop-blur lg:hidden">
