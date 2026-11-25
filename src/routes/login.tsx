@@ -54,12 +54,22 @@ function LoginPage() {
 
     setBusy(true);
     try {
-      // Nettoyer toute session précédente corrompue avant de se connecter
+      // 1. Déconnecter d'abord toute session active ou corrompue
+      try {
+        await supabase.auth.signOut({ scope: "local" });
+      } catch {
+        // Ignorer les erreurs de signOut (session déjà invalide)
+      }
+
+      // 2. Purger localStorage de tous les tokens Supabase résiduels
       if (typeof window !== "undefined") {
         Object.keys(localStorage)
           .filter((k) => k.startsWith("sb-") || k.startsWith("supabase"))
           .forEach((k) => localStorage.removeItem(k));
       }
+
+      // 3. Petite pause pour laisser le client se réinitialiser
+      await new Promise((r) => setTimeout(r, 50));
 
       const { data, error } = await supabase.auth.signInWithPassword({
         email: cleanEmail,
