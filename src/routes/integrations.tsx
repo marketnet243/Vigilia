@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { AppShell } from "@/components/app/shell";
 import { IntegrationStatusBadge, PageHeader, fmtDate } from "@/components/app/status";
 import { pageHead } from "@/lib/workspace/head";
-import { connectGithub, connectTelegram, disconnectIntegration, disconnectTelegram, inspectRepo, testIntegration, testTelegram, updateTelegramPrefs } from "@/lib/workspace/integrations.functions";
+import { connectGithub, connectTelegram, disconnectIntegration, disconnectTelegram, inspectRepo, refreshTelegramCommands, testIntegration, testTelegram, updateTelegramPrefs } from "@/lib/workspace/integrations.functions";
 import type { Workspace } from "@/lib/workspace/workspace.functions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,6 +28,7 @@ function IntegrationsView({ w, refresh }: { w: Workspace; refresh: () => void })
   const doTgPrefs = useServerFn(updateTelegramPrefs);
   const doTgTest = useServerFn(testTelegram);
   const doDisTg = useServerFn(disconnectTelegram);
+  const doTgMenu = useServerFn(refreshTelegramCommands);
 
   const [ghToken, setGhToken] = useState("");
   const [repoSlug, setRepoSlug] = useState("Landry-kayoyo/vigilia-command-center-98e3812d");
@@ -148,7 +149,7 @@ function IntegrationsView({ w, refresh }: { w: Workspace; refresh: () => void })
               <CardTitle className="flex items-center gap-2 text-base"><MessageSquare className="size-4 text-primary" />Telegram</CardTitle>
               <IntegrationStatusBadge status={tg?.verified ? "connected" : tg?.bot_username ? "error" : "not_configured"} />
             </div>
-            <CardDescription>Webhook sécurisé par jeton secret, liaison par code unique, alertes et commandes (/status, /mission, /approve).</CardDescription>
+            <CardDescription>Votre centre de commande privé.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {tg && (
@@ -160,7 +161,13 @@ function IntegrationsView({ w, refresh }: { w: Workspace; refresh: () => void })
                     </div>
                     <div className="text-muted-foreground">Webhook : {tg.webhook_active ? "actif" : "inactif"} · Chat : {tg.verified ? `#${tg.chat_id}` : "en attente de vérification"}</div>
                   </div>
-                  <div className="flex gap-1.5">
+                  <div className="flex flex-wrap gap-1.5">
+                    <Button size="sm" variant="outline" disabled={!tg.bot_username || busy === 'tg-menu'} onClick={async () => {
+                      setBusy('tg-menu');
+                      try { await doTgMenu(); toast.success('Menu Telegram mis à jour.'); refresh(); }
+                      catch (err) { toast.error(err instanceof Error ? err.message : 'Mise à jour impossible'); }
+                      finally { setBusy(null); }
+                    }}><RefreshCw className="mr-1 size-3.5" />Actualiser le menu</Button>
                     <Button size="sm" variant="outline" disabled={!tg.verified || busy === "tg-test"} onClick={async () => {
                       setBusy("tg-test");
                       try { await doTgTest(); toast.success("Notification Telegram envoyée."); }

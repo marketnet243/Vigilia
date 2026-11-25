@@ -1,74 +1,77 @@
 import { createFileRoute } from '@tanstack/react-router';
+import { z } from 'zod';
+import { authorizedTelegramChat, parseTelegramCommand, splitTelegramText, telegramHelp, telegramUpdateSchema } from '@/lib/telegram/commands';
 
-type TgUpdate = { update_id: number; message?: { chat: { id: number }; from?: { id: number }; text?: string } };
+export async function handleTelegramWebhook(request: Request): Promise<Response> {
+  const owner = z.uuid().safeParse(new URL(request.url).searchParams.get('o'));
+  if (!owner.success) return new Response('Bad request', { status: 400 });
+  const provided = request.headers.get('x-telegram-bot-api-secret-token');
+  if (!provided || provided.length > 256) return new Response('Unauthorized', { status: 401 });
+  const { supabaseAdmin: a } = await import('@/integrations/supabase/client.server');
+  const { sha256Base64Url, timingSafeEqualStr, decryptSecret, containsSecret, redactSecrets } = await import('@/lib/crypto.server');
+  const { data: link, error: linkError } = await a.from('telegram_links').select('*').eq('owner_id', owner.data).maybeSingle();
+  if (linkError) return new Response('Temporarily unavailable', { status: 503 });
+  if (!link?.webhook_secret_hash || !link.encrypted_bot_token || !timingSafeEqualStr(await sha256Base64Url(provided), link.webhook_secret_hash)) return new Response('Unauthorized', { status: 401 });
+  // A revoked owner must no longer be able to operate through an old bot link.
+  const { data: role, error: roleError } = await a.from('user_roles').select('id').eq('user_id', owner.data).eq('role', 'owner').maybeSingle();
+  if (roleError) return new Response('Temporarily unavailable', { status: 503 });
+  if (!role) return new Response('Forbidden', { status: 403 });
+  let body: unknown;
+  try {
+    const raw = await request.text();
+    if (raw.length > 64000) return new Response('Payload too large', { status: 413 });
+    body = JSON.parse(raw);
+  } catch { return new Response('Invalid JSON', { status: 400 }); }
+  const parsed = telegramUpdateSchema.safeParse(body);
+  if (!parsed.success) return new Response('Invalid update', { status: 400 });
+  const update = parsed.data;
+  // Editing a sent command must never trigger an action a second time.
+  const msg = update.message;
+  if (!msg?.text) return Response.json({ ok: true, ignored: true });
+  if (msg.chat.type !== 'private' || msg.from?.id !== msg.chat.id || msg.from.is_bot === true) return Response.json({ ok: true, ignored: true });
+  if (link.verified && !authorizedTelegramChat(link, msg)) return Response.json({ ok: true, ignored: true });
+  const cmd = parseTelegramCommand(msg.text);
+  if (cmd.bot && cmd.bot !== link.bot_username?.toLowerCase()) return Response.json({ ok: true, ignored: true });
+  const { sendTelegramText } = await import('@/lib/telegram/client.server');
+  const token = await decryptSecret(link.encrypted_bot_token);
+  let responses = '';
+  const reply = async (text: string) => {
+    const safe = redactSecrets(text);
+    for (const chunk of splitTelegramText(safe)) {
+      const result = await sendTelegramText(token, msg.chat.id, chunk, { plain: true, menu: cmd.command === 'help' || cmd.command === 'start' });
+      if (!result.ok) throw new Error('Envoi de la réponse Telegram impossible.');
+    }
+    responses += (responses ? '\n\n' : '') + safe;
+    await a.from('telegram_messages').update({ raw_update: { response: responses.slice(0, 24000) } }).eq('owner_id', owner.data).eq('update_id', update.update_id);
+  };
+  // Persist only authorized, redacted text; primary key prevents retries from replaying writes.
+  const stored = await a.from('telegram_messages').insert({ update_id: update.update_id, owner_id: owner.data, chat_id: msg.chat.id, user_id: msg.from.id, direction: 'in', text: link.verified ? redactSecrets(msg.text) : '[Liaison Telegram]' });
+  if (stored.error?.code === '23505') return Response.json({ ok: true, duplicate: true });
+  if (stored.error) return new Response('Temporarily unavailable', { status: 503 });
+  try {
+    if (!link.verified) {
+      const code = cmd.command === 'start' ? cmd.argument : msg.text.trim();
+      const valid = link.verification_code && link.verification_expires_at && Date.parse(link.verification_expires_at) > Date.now() && timingSafeEqualStr(code, link.verification_code);
+      if (!valid) await reply('Envoyez le code de vérification affiché dans Vigilia.');
+      else {
+        const result = await a.from('telegram_links').update({ verified: true, chat_id: msg.chat.id, verification_code: null, verification_expires_at: null }).eq('owner_id', owner.data).eq('verified', false).eq('verification_code', code).gt('verification_expires_at', new Date().toISOString()).select('id').single();
+        if (result.error) throw new Error('Liaison déjà décidée ou code expiré.');
+        await reply('✅ Chat privé lié à Vigilia.\n\n' + telegramHelp);
+      }
+    } else if (containsSecret(msg.text)) await reply('Retirez les secrets de votre message. Ils ne sont pas enregistrés en clair.');
+    else {
+      const { dispatchTelegramCommand } = await import('@/lib/telegram/dispatch.server');
+      await dispatchTelegramCommand(a, owner.data, msg.chat.id, msg.text, reply);
+    }
+    await a.from('telegram_links').update({ last_error: null }).eq('owner_id', owner.data);
+  } catch (error) {
+    const safe = redactSecrets(error instanceof Error ? error.message : 'Commande impossible.').slice(0, 500);
+    await a.from('telegram_links').update({ last_error: safe }).eq('owner_id', owner.data);
+    try { await reply(`⚠️ ${safe}\nConsultez l’état dans Vigilia avant de renvoyer une action.`); } catch { /* A retry must not replay a completed action. */ }
+  }
+  return Response.json({ ok: true });
+}
 
 export const Route = createFileRoute('/api/public/telegram/webhook')({
-  server: {
-    handlers: {
-      POST: async ({ request }) => {
-        const ownerId = new URL(request.url).searchParams.get('o') ?? '';
-        if (!/^[0-9a-f-]{36}$/i.test(ownerId)) return new Response('Bad request', { status: 400 });
-        const { supabaseAdmin: a } = await import('@/integrations/supabase/client.server');
-        const { sha256Base64Url, timingSafeEqualStr, decryptSecret } = await import('@/lib/crypto.server');
-        const { data: link } = await a.from('telegram_links').select('*').eq('owner_id', ownerId).maybeSingle();
-        const provided = request.headers.get('x-telegram-bot-api-secret-token') ?? '';
-        if (!link?.webhook_secret_hash || !link.encrypted_bot_token || !timingSafeEqualStr(await sha256Base64Url(provided), link.webhook_secret_hash)) return new Response('Unauthorized', { status: 401 });
-        const upd = (await request.json()) as TgUpdate;
-        const msg = upd.message;
-        if (!msg?.text) return Response.json({ ok: true });
-        // anti-replay: update_id is the primary key
-        const ins = await a.from('telegram_messages').insert({ update_id: upd.update_id, owner_id: ownerId, chat_id: msg.chat.id, user_id: msg.from?.id ?? null, direction: 'in', text: msg.text.slice(0, 4000) });
-        if (ins.error) return Response.json({ ok: true });
-        const { sendTelegramText } = await import('@/lib/telegram/client.server');
-        const token = await decryptSecret(link.encrypted_bot_token);
-        const reply = (t: string) => sendTelegramText(token, msg.chat.id, t);
-        const text = msg.text.trim();
-
-        if (!link.verified) {
-          const codeOk = link.verification_code && link.verification_expires_at && Date.parse(link.verification_expires_at) > Date.now() && text.replace(/^\/start\s*/, '') === link.verification_code;
-          if (codeOk) {
-            await a.from('telegram_links').update({ verified: true, chat_id: msg.chat.id, verification_code: null }).eq('owner_id', ownerId);
-            await reply('✅ Chat lié à Vigilia. Commandes : /status, /incidents, /missions, /mission <demande>, /approve <id>, /reject <id>');
-          } else await reply('Envoyez le code de vérification affiché dans Vigilia.');
-          return Response.json({ ok: true });
-        }
-        if (Number(link.chat_id) !== msg.chat.id) return Response.json({ ok: true });
-
-        const [cmd, ...rest] = text.split(/\s+/);
-        const arg = rest.join(' ');
-        if (cmd === '/status') {
-          const { data: m } = await a.from('monitors').select('name,last_status').eq('owner_id', ownerId);
-          const down = (m ?? []).filter((x) => x.last_status === 'down');
-          await reply(`📊 ${m?.length ?? 0} contrôles, ${down.length} en panne${down.length ? '\n' + down.map((d) => '• ' + d.name).join('\n') : ''}`);
-        } else if (cmd === '/incidents') {
-          const { data } = await a.from('incidents').select('title,severity').eq('owner_id', ownerId).neq('status', 'resolved').limit(10);
-          await reply(data?.length ? data.map((i) => `• [${i.severity}] ${i.title}`).join('\n') : 'Aucun incident ouvert.');
-        } else if (cmd === '/missions') {
-          const { data } = await a.from('missions').select('title,status').eq('owner_id', ownerId).order('created_at', { ascending: false }).limit(8);
-          await reply(data?.length ? data.map((i) => `• ${i.title} — ${i.status}`).join('\n') : 'Aucune mission.');
-        } else if (cmd === '/mission' && arg.length > 3) {
-          const { containsSecret } = await import('@/lib/crypto.server');
-          if (containsSecret(arg)) { await reply('Retirez les secrets de votre demande.'); return Response.json({ ok: true }); }
-          const { data: mission } = await a.from('missions').insert({ owner_id: ownerId, title: arg.slice(0, 120), description: arg, source: 'telegram' }).select('id').single();
-          await reply('🛰️ Mission créée, analyse en cours…');
-          if (mission) {
-            const { executeMissionPipeline } = await import('@/lib/ai/orchestrator.server');
-            executeMissionPipeline(a, ownerId, mission.id).catch((e) => console.error(e));
-          }
-        } else if ((cmd === '/approve' || cmd === '/reject') && arg.length >= 6) {
-          const { data: list } = await a.from('approvals').select('id,status,expires_at,title').eq('owner_id', ownerId).eq('status', 'pending');
-          const ap = (list ?? []).find((x) => x.id.startsWith(arg.toLowerCase()));
-          if (!ap || Date.parse(ap.expires_at) <= Date.now()) await reply('Approbation introuvable ou expirée.');
-          else {
-            await a.from('approvals').update({ status: cmd === '/approve' ? 'approved' : 'rejected', decided_at: new Date().toISOString(), decision_note: 'Via Telegram' }).eq('id', ap.id).eq('status', 'pending');
-            await a.from('audit_logs').insert({ owner_id: ownerId, actor_type: 'telegram', actor_name: 'Telegram', action: cmd === '/approve' ? 'approval_granted' : 'approval_rejected', resource_type: 'approval', resource_id: ap.id });
-            await reply(`${cmd === '/approve' ? '✅ Approuvé' : '❌ Refusé'} : ${ap.title}`);
-          }
-        } else {
-          await reply('Commandes : /status, /incidents, /missions, /mission <demande>, /approve <id>, /reject <id>');
-        }
-        return Response.json({ ok: true });
-      },
-    },
-  },
+  server: { handlers: { POST: ({ request }) => handleTelegramWebhook(request) } },
 });

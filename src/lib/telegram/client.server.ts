@@ -1,4 +1,5 @@
 import { decryptSecret, sha256Base64Url } from "@/lib/crypto.server";
+import { telegramCommands } from './commands';
 
 const TG_API = "https://api.telegram.org";
 
@@ -49,7 +50,7 @@ export async function registerTelegramWebhook(
   }
 }
 
-export async function sendTelegramText(token: string, chatId: number | string, text: string): Promise<{ ok: boolean; error?: string }> {
+export async function sendTelegramText(token: string, chatId: number | string, text: string, options: { plain?: boolean; menu?: boolean } = {}): Promise<{ ok: boolean; error?: string }> {
   try {
     const res = await fetch(`${TG_API}/bot${token}/sendMessage`, {
       method: "POST",
@@ -57,7 +58,8 @@ export async function sendTelegramText(token: string, chatId: number | string, t
       body: JSON.stringify({
         chat_id: chatId,
         text: text.slice(0, 4000),
-        parse_mode: "HTML",
+        ...(options.plain ? {} : { parse_mode: "HTML" }),
+        ...(options.menu ? { reply_markup: { keyboard: [['/status', '/projects'], ['/monitors', '/incidents'], ['/missions', '/approvals'], ['/agents', '/help']], resize_keyboard: true, is_persistent: true } } : {}),
         disable_web_page_preview: true,
       }),
       signal: AbortSignal.timeout(10_000),
@@ -70,6 +72,18 @@ export async function sendTelegramText(token: string, chatId: number | string, t
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Erreur réseau Telegram" };
   }
+}
+
+export async function registerTelegramCommands(token: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${TG_API}/bot${token}/setMyCommands`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ commands: telegramCommands, scope: { type: 'all_private_chats' } }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const data = await res.json() as { ok: boolean; description?: string };
+    return res.ok && data.ok ? { ok: true } : { ok: false, error: data.description ?? `Menu Telegram (${res.status})` };
+  } catch { return { ok: false, error: 'Impossible de mettre à jour le menu Telegram.' }; }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

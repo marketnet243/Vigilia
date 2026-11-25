@@ -126,6 +126,7 @@ export const connectTelegram = createServerFn({ method: 'POST' }).middleware([ow
     const row = { owner_id: context.userId, encrypted_bot_token: await encryptSecret(data.token), webhook_secret_hash: await sha256Base64Url(secret), bot_username: v.username ?? null, webhook_url: webhookUrl, webhook_active: reg.ok, verified: false, chat_id: null, verification_code: code, verification_expires_at: new Date(Date.now() + 15 * 60_000).toISOString(), last_error: reg.ok ? null : reg.error ?? 'Webhook non enregistré', updated_at: new Date().toISOString() };
     const q = await a.from('telegram_links').upsert(row, { onConflict: 'owner_id' });
     if (q.error) throw new Error(q.error.message);
+    await tg.registerTelegramCommands(data.token);
     const { data: existing } = await a.from('integrations').select('id').eq('owner_id', context.userId).eq('provider', 'telegram').maybeSingle();
     const integ = { owner_id: context.userId, provider: 'telegram', name: 'Telegram', status: reg.ok ? 'connected' : 'error', config: { bot: v.username ?? null }, last_tested_at: new Date().toISOString(), last_error: row.last_error };
     if (existing) await a.from('integrations').update(integ).eq('id', existing.id); else await a.from('integrations').insert(integ);
@@ -149,6 +150,18 @@ export const testTelegram = createServerFn({ method: 'POST' }).middleware([owner
   return { ok };
 });
 
+export const refreshTelegramCommands = createServerFn({ method: 'POST' }).middleware([ownerOnly]).handler(async ({ context }) => {
+  const a = await admin();
+  const { data: link, error } = await a.from('telegram_links').select('encrypted_bot_token').eq('owner_id', context.userId).single();
+  if (error || !link?.encrypted_bot_token) throw new Error('Configurez votre bot Telegram avant de mettre à jour son menu.');
+  const { decryptSecret } = await import('@/lib/crypto.server');
+  const { registerTelegramCommands } = await import('@/lib/telegram/client.server');
+  const result = await registerTelegramCommands(await decryptSecret(link.encrypted_bot_token));
+  if (!result.ok) throw new Error(result.error ?? 'Mise à jour du menu impossible.');
+  await audit(context.userId, context.email, 'telegram_commands_updated', 'integration', null);
+  return { ok: true };
+});
+
 export const disconnectTelegram = createServerFn({ method: 'POST' }).middleware([ownerOnly]).handler(async ({ context }) => {
   const a = await admin();
   await a.from('telegram_links').delete().eq('owner_id', context.userId);
@@ -161,7 +174,8 @@ export const askAssistant = createServerFn({ method: 'POST' }).middleware([owner
   .inputValidator(z.object({ messages: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.string().max(8000) })).min(1).max(30) }))
   .handler(async ({ data, context }) => {
     const { containsSecret } = await import('@/lib/crypto.server');
-    const last = data.messages[data.messages.length - 1]!;
+    const last = data.messages[data.messages.length - 1];
+    if (!last) throw new Error('Message manquant.');
     if (containsSecret(last.content)) throw new Error('Retirez les secrets de votre message.');
     const s = context.supabase;
     const [p, inc, m] = await Promise.all([

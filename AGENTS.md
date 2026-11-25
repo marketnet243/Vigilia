@@ -29,3 +29,4 @@ use the editor.
 - **Secrets.** Lovable manages them. Do not put secret values in the repo.
 <!-- LOVABLE:END -->
 - Telegram webhooks are registered on the public dev host (src/lib/telegram/webhook-url.ts) because the editor preview host is auth-gated.
+- Telegram command parsing is browser-safe; execution is isolated in a server module with owner-scoped queries, private-chat authorization, durable update deduplication and explicit confirmation for sensitive decisions to prevent unintended remote actions.

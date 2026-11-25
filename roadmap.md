@@ -7,3 +7,4 @@
 - [x] Refonte visuelle (couleurs, navigation, barre d'état, menu mobile)
 - [ ] Lier le bot Telegram (requiert le jeton BotFather du propriétaire)
 - [ ] Données antérieures éventuelles (export à fournir)
+- [ ] Étendre Telegram : conversation, projets, contrôles, incidents, missions, mémoire et approbations sécurisées
